@@ -3,7 +3,7 @@
 <html>
 <head>
 	<meta charset="utf-8">
-	<title>构建C协程之ucontext篇（上） - AmaL'sbLoG</title>
+	<title>构建C协程之ucontext篇 - AmaL'sbLoG</title>
     <meta name="author" content="Amal Cao">
     
 	<meta name="description" content="原理简介 所谓 “ucontext” 机制是 GNU C 库提供的一组用于创建、保存、切换用户态执行“上下文”（context）的API，可以看作是 “setjmp/long_jmp” 的“升级版”，主要包括以下四个函数： void makecontext(ucontext_t *ucp, &hellip;">
@@ -84,7 +84,7 @@
 <!-- begin toload --> 
     <div id="content" class="inner">
         <article class="post">
-	<h2 class="title">构建C协程之ucontext篇（上）</h2>
+	<h2 class="title">构建C协程之ucontext篇</h2>
 	<div class="entry-content"><h1>原理简介</h1>
 
 <p>所谓 “ucontext” 机制是 GNU C 库提供的一组用于创建、保存、切换用户态执行“上下文”（context）的API，可以看作是 “setjmp/long_jmp” 的“升级版”，主要包括以下四个函数：</p>
@@ -158,7 +158,7 @@
 <p>对于将“协程”映射到多OS线程执行的情形，就要稍稍复杂一些，但主要的问题是集中在共享任务队列的实现、调度线程间的互斥等，至于“协程”的映射问题，与单线程情况没有太大的区别。
 对于这方面的开源借鉴，当然首推Go的运行时 —— 但由于标准Go实现没有使用GNU C库，而是自行设计了包括C编译器在内的整套工具链，因而就没有直接采用ucontext机制（尽管其内部实现机制与ucontext原理类似）。</p>
 
-<p>在下一篇中，会转而分析GCC Go语言前端的运行时实现——libgo。
+<p>以后有机会，会再分析一下GCC Go语言前端的运行时实现——libgo。
 libgo的调度器部分基本用C开发并由GCC编译，“goroutine”（Go语言中相对于“协程”的概念）也直接以“ucontext”机制实现，其代码对于分析C语言下“协程”系统实现方法而言，具有较高的参考价值。</p>
 </div>
 
