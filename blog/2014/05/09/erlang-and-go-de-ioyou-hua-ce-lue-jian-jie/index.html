@@ -1,0 +1,243 @@
+
+<!DOCTYPE HTML>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>Erlang &amp; Go 的IO优化策略简介 - AmaL'sbLoG</title>
+    <meta name="author" content="Amal Cao">
+    
+	<meta name="description" content="之前关于调度器的对比分析的文章，在结束时遗留了一些问题：当系统出现高并发的IO访问时，如一个网络服务器通常要并发处理成百上千的链接，每个链接可能都是由一个用户任务执行的，那么将会出现大量阻塞的IO操作，如果为每个阻塞操作都单独分配一个OS线程，那么系统很容易就会退化成多OS线程的系统， &hellip;">
+	
+	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+	<link href="/atom.xml" rel="alternate" title="AmaL'sbLoG" type="application/atom+xml">
+	<link rel="canonical" href="">
+	<link href="/favicon.ico" rel="shortcut icon">
+    <link href="/stylesheets/screen.css" media="screen, projection" rel="stylesheet" type="text/css">
+
+    <link href='http://fonts.googleapis.com/css?family=Slackey' rel='stylesheet' type='text/css'>
+    <link href='http://fonts.googleapis.com/css?family=Fjalla+One' rel='stylesheet' type='text/css'>
+    <link href='http://fonts.googleapis.com/css?family=Amethysta' rel='stylesheet' type='text/css'>
+	<script src="//ajax.googleapis.com/ajax/libs/jquery/1.8.2/jquery.min.js"></script>
+    <!--[if lt IE 9]><script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script><![endif]-->
+
+    <script type="text/javascript" src="/javascripts/jquery-tapir.js"></script>
+
+    <!-- remove or comment it to disable ajaxification -->   
+    <script src="/javascripts/ajaxify.js"></script>
+   
+    
+    
+
+</head>
+
+
+<body>
+    <div id="wrapper">
+    <header id="header" class="inner"><!-- for more effects see _animate.scss -->
+<h1 class="animated bounceInDown">
+    <div id="headerbg">
+        Amal Cao
+    </div>
+</h1>
+<br>
+
+<ul id="social-links" style="text-align:center">
+  
+  
+  <!-- Google Plus -->
+  <li>
+  <a href="http://plus.google.com/u/0/115894150619087578630?rel=author" class="google" title="Google+"></a>
+  </li>
+  
+  
+  
+  
+  
+  
+  
+</ul>
+
+
+<!-- use full url including 'index.html' for navigation bar if you are using ajax -->
+<ul id="nav">
+	<li id="ajax"><a href="/index.html">Home</a></li>
+	<li id="ajax"><a href="/blog/archives/index.html">Archives</a></li>
+    <li><a href="/atom.xml">RSS</a></li>
+    
+    <li>
+    <div id="dark">
+        <form method="get" action="/search.html" id="search">
+            <input name="query" type="text" placeholder="Search..." x-webkit-speech />
+        </form>
+    </div>
+    </li>
+        
+</ul>
+
+
+
+
+</header>
+
+<div id="toload">
+<!-- begin toload --> 
+    <div id="content" class="inner">
+        <article class="post">
+	<h2 class="title">Erlang &amp; Go 的IO优化策略简介</h2>
+	<div class="entry-content"><blockquote><p><em>之前关于调度器的对比分析的文章，在结束时遗留了一些问题：当系统出现高并发的IO访问时，如一个网络服务器通常要并发处理成百上千的链接，每个链接可能都是由一个用户任务执行的，那么将会出现大量阻塞的IO操作，如果为每个阻塞操作都单独分配一个OS线程，那么系统很容易就会退化成多OS线程的系统，轻量任务的优势将无从谈起。本文试图回答这个问题，通过分析Go和Erlang对于IO、特别是网络IO的优化机制，了解其对调度器乃至整个系统性能的影响。</em></p></blockquote>
+
+<h2>Go的IO优化机制 —— netpoller</h2>
+
+<p>由于Go是一门主要面向互联网环境的分布式语言，相对于一般的IO，如文件读写等，网络IO的并发性能更加重要。对于一般IO，Go的处理方式就是按上篇所说的，将执行Syscall的OS线程剥离。通常应用场景下，不会出现大量并发Goroutine去同时读写文件的情况，因而上面的方式并不会真正造成调度器的退化。因此主要的IO优化都是针对io/net库的。</p>
+
+<p>无独有偶，Erlang在实现上同样对网络IO提供了不同于一般IO的高效处理方式，后面再作介绍。</p>
+
+<p>Go实现中利用了OS提供的非阻塞IO访问模式，并配合<code>epll</code>/<code>kqueue</code>等IO事件监控机制；但是为了弥合OS的异步机制与Go接口的差异，Go在其库中做了一些封装，并在runtime层提供了一种叫做netpoller，“网络轮询器”的机制，来实现网络IO优化。具体来说：</p>
+
+<ul>
+<li>首先，无论何时，当在Go中打开或接收到一个链接时，其文件句柄都会被设为<code>NONBLOCKING</code>模式。（<em>Go语言库</em>）</li>
+<li>当调用相应的Read/Write等操作时，无论是否成功，都会直接返回而不会阻塞。当返回值是EAGAIN时，表示IO事件还没有到达，需要等待。这时，Go库函数调用<code>PollServer</code>的<code>AddFd()</code>将对应文件句柄加入netpoller的监控池，并将当前Goroutine阻塞。（<em>Go语言库、netpoll.goc中</em>）</li>
+<li>当系统中存在空闲 P &amp; M (参见<a href="http://blog.amalcao.me/blog/2014/05/09/erlang-and-go-de-bing-fa-diao-du-qian-xi/">这里</a>) 时，runtime 会首先查找本地就绪队列，若其空，则调用netpoller; netpoller通过OS提供的epoll或kqueue机制，检查已到达的IO事件，并唤醒对应的Goroutine返回给runtime，将其再度执行。（<em>runtime/proc.c:findrunnable()</em>）</li>
+<li>最后，Goroutine再次回到Go语言库上下文时，再调用Read/Write等IO操作时，就可以顺利返回了。(<em>Go语言库</em>)</li>
+</ul>
+
+
+<h2>Erlang的IO优化机制之一  —— “Async Threads Pool”</h2>
+
+<p>在Erlang中，所有IO操作都需要以Port驱动的形式提供，所谓Port驱动包含一组C回调函数，用来响应用户进程的访问；用户进程则通过通用的消息传递机制与Port交互。Erlang虚拟机会把Port当做一种特殊的任务加以调度。</p>
+
+<p>真正的系统调用，如read/write/flush等阻塞式操作都被封装在Port的回调函数之中，当调度器调度执行响应的Port时，就会导致当前的调度器执行线程被OS阻塞，从而影响系统的并行性。</p>
+
+<p>Erlang解决该问题的办法是提供了一组OS线程作为异步线程池，阻塞的IO操作（以函数指针形式）会被Port注册到异步线程池的操作队列中。异步线程则执行循环操作，取出当前任务队列的IO任务并执行阻塞操作。</p>
+
+<p>这种方式类似Go对非net类IO及执行阻塞式Syscall的调度方式：用一个单独的OS线程去执行阻塞操作。</p>
+
+<p>Erlang的file IO基本上就是以上述方式实现的。</p>
+
+<p><em>因为 Erlang 将调度器映射到一个OS线程而说其调度是1：1的其实是不准确的。基于对阻塞IO的异步处理及上篇讲到的负载平衡机制，使得Erlang实际上也实现了M：N的调度，只不过Erlang的官方文档并没有这么说，只是说单纯增加调度器数不会对性能造成影响。</em></p>
+
+<h2>Erlang的IO优化机制之二  ——  “System Level Activities”</h2>
+
+<p>如前所述，无论时Erlang还是Go，都是针对服务器端设计的语言，因此都提供了不同于一般IO的特殊机制来处理网络IO。</p>
+
+<p>Erlang的做法是提供一种特别的调度单元 —— <strong>System Level Activities</strong>，来调度异步IO事件。它的思想和Go的netpoller非常类似：</p>
+
+<ul>
+<li>首先，网络链接对应的句柄会被设为<code>NONBLOCKING</code>状态；</li>
+<li>一次IO操作如果在响应事件到来前被调用，则会将其等待的事件注册到Erlang虚拟机的IO事件链中；</li>
+<li>调度器在调度时，会周期性的调用<code>check_io</code>操作来检查已注册的IO事件是否已经到来（<em>利用OS的poll操作</em>），并唤醒响应事件阻塞的用户任务（<em>进程或Port</em>）。</li>
+</ul>
+
+
+<p>值得注意的是，Erlang虚拟机在处理IO事件时，还采用了一种 <strong>stealing</strong> 的机制。具体来说，当一个driver的函数调用IO操作时，如果对应IO事件没有到来时，还会主动调用 <code>select_steal()</code>窃取其他已注册的IO事件，如果该事件已触发，则完成相应的读/写操作，并通知上层进行后续处理。</p>
+
+<h2>Libtask中的异步IO机制</h2>
+
+<p>作为Go语言的前身，<a href="">Libtask</a>库同样实现了异步IO机制，并且实现方式更加简洁。</p>
+
+<p>与Go类似，在Libtask中，为用户级task封装了IO操作，提供了fdread/fdwrite/fdwait/fdnoblock等接口实现异步IO。（<em>在libtask提供的例子中，所有IO操作都是针对网络IO的，因此仅就网络IO情况加以分析。</em>）</p>
+
+<ul>
+<li>链接句柄首先会通过调用<code>fdblock()</code>被设为<code>NONBLOCKING</code>态；</li>
+<li>之后调用<code>fdread</code>/<code>fdwrite</code>时，一旦返回<code>EAGAIN</code>，则调用<code>fdwait</code>，注册等待IO事件并将自身调出;</li>
+<li>Libtask会在第一次接收到IO事件注册后建立一个系统任务<code>fdtask</code>，该任务通过调用poll系统调用检查新到来的IO事件，并将对应任务重新加到就绪队列中。</li>
+</ul>
+
+
+<h2>总结及参考</h2>
+
+<p>通过上文分析，了解到IO优化对调度器乃至语言本身性能的影响。这与两种语言的应用背景——服务器端编程有很大关系。</p>
+
+<p>通常来说，应用程序必须通过Syscall 访问操作的特定功能，这就会涉及底层 OS 的调度机制，作为用户态的任务调度器，Erlang虚拟机或Go的运行时系统都必须对内核调度引入的不确定性加以控制。特别是 IO 操作这类特殊并且会大量访问到的Syscall，必须设计有针对性的优化方案，才能确保高的并发性能。</p>
+
+<p>Go 和 Erlang 的实现方案随不尽相同，但核心的思想都是类似的，通过异步IO 优化基于Socket的操作，而对于一般的文件读写，则直接让执行线程及运行的用户任务阻塞，调度器再将其他可以执行的任务绑定到其他OS线程继续执行。</p>
+
+<p>这篇文章除了参考了Erlang/OTP及Go语言的源代码外，还参考了以下资料：</p>
+
+<ul>
+<li>Morsing &ldquo;The Go netpoller&rdquo; <a href="http://morsmachine.dk/netpoller">http://morsmachine.dk/netpoller</a></li>
+<li>Ramblings &ldquo;How Erlang does scheduling&rdquo; <a href="http://morsmachine.dk/netpoller">http://jlouisramblings.blogspot.com/2013/01/how-erlang-does-scheduling.html</a></li>
+</ul>
+
+</div>
+
+<div class="meta">
+	
+		<span class="comments"><a href="/blog/2014/05/09/erlang-and-go-de-ioyou-hua-ce-lue-jian-jie/#disqus_thread">Comments</a></span>
+	
+</div>
+</article>
+
+	<div class="share">
+	<div class="addthis_toolbox addthis_default_style ">
+	
+	
+	<a class="addthis_button_tweet"></a>
+	
+	
+	<a class="addthis_counter addthis_pill_style"></a>
+	</div>
+  <script type="text/javascript" src="http://s7.addthis.com/js/250/addthis_widget.js#pubid="></script>
+</div>
+
+
+
+<section id="comment">
+    <h2 class="title">Comments</h2>
+    <div id="disqus_thread" aria-live="polite"><noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+</div>
+</section>
+
+    </div>
+    <footer id="footer">
+    <div style="display:inline">
+    Copyright &copy; 2016
+
+    Amal Cao
+. Powered by <a href="http://octopress.org">Octopress</a> | 
+    Theme <a href="http://github.com/panks/fabric">fabric</a> by <a href="http://panks.me">Pankaj Kumar</a>
+</div>
+
+
+    </footer>
+    <script src="/javascripts/fabric.js"></script>
+<script src="/javascripts/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+(function($){
+	$('.fancybox').fancybox();
+})(jQuery);
+</script> <!-- Delete or comment this line to disable Fancybox -->
+
+
+<script type="text/javascript">
+      var disqus_shortname = 'amalsblog';
+      
+        
+        // var disqus_developer = 1;
+        var disqus_identifier = 'http://amalcao.github.io/blog/2014/05/09/erlang-and-go-de-ioyou-hua-ce-lue-jian-jie/';
+        var disqus_url = 'http://amalcao.github.io/blog/2014/05/09/erlang-and-go-de-ioyou-hua-ce-lue-jian-jie/';
+        var disqus_script = 'embed.js';
+      
+    (function () {
+      var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+      dsq.src = 'http://' + disqus_shortname + '.disqus.com/' + disqus_script;
+      (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    }());
+</script>
+
+
+
+
+
+<!-- end toload --> 
+</div>
+</div>
+<script src="/javascripts/jquery.ui.totop.js" type="text/javascript"></script>
+<script type="text/javascript">
+/*<![CDATA[*/
+;(function($){$().UItoTop({easingType:'easeOutCirc'});})(jQuery); 
+/*]]>*/
+</script><!-- remove it to remove the scroll to top button -->
+</body>
+</html>

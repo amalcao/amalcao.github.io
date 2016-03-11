@@ -1,0 +1,317 @@
+
+<!DOCTYPE HTML>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>关于Go语言调度器实现细节的补充分析 - AmaL'sbLoG</title>
+    <meta name="author" content="Amal Cao">
+    
+	<meta name="description" content="在之前的一篇博文中，简单的介绍了一下Go调度器的原理。而进行了一番深入分析后，发现Go的调度器代码中存在许多值得玩味的细节，不仔细体会可能很难发觉作者的匠心。原本打算再写一篇文章系统的分析一下这些细节，但无意中发现了另一位爱好Go的朋友已经做类似的工作，并且结构非常清晰，内容也较准确（链接在这里 &hellip;">
+	
+	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+	<link href="/atom.xml" rel="alternate" title="AmaL'sbLoG" type="application/atom+xml">
+	<link rel="canonical" href="">
+	<link href="/favicon.ico" rel="shortcut icon">
+    <link href="/stylesheets/screen.css" media="screen, projection" rel="stylesheet" type="text/css">
+
+    <link href='http://fonts.googleapis.com/css?family=Slackey' rel='stylesheet' type='text/css'>
+    <link href='http://fonts.googleapis.com/css?family=Fjalla+One' rel='stylesheet' type='text/css'>
+    <link href='http://fonts.googleapis.com/css?family=Amethysta' rel='stylesheet' type='text/css'>
+	<script src="//ajax.googleapis.com/ajax/libs/jquery/1.8.2/jquery.min.js"></script>
+    <!--[if lt IE 9]><script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script><![endif]-->
+
+    <script type="text/javascript" src="/javascripts/jquery-tapir.js"></script>
+
+    <!-- remove or comment it to disable ajaxification -->   
+    <script src="/javascripts/ajaxify.js"></script>
+   
+    
+    
+
+</head>
+
+
+<body>
+    <div id="wrapper">
+    <header id="header" class="inner"><!-- for more effects see _animate.scss -->
+<h1 class="animated bounceInDown">
+    <div id="headerbg">
+        Amal Cao
+    </div>
+</h1>
+<br>
+
+<ul id="social-links" style="text-align:center">
+  
+  
+  <!-- Google Plus -->
+  <li>
+  <a href="http://plus.google.com/u/0/115894150619087578630?rel=author" class="google" title="Google+"></a>
+  </li>
+  
+  
+  
+  
+  
+  
+  
+</ul>
+
+
+<!-- use full url including 'index.html' for navigation bar if you are using ajax -->
+<ul id="nav">
+	<li id="ajax"><a href="/index.html">Home</a></li>
+	<li id="ajax"><a href="/blog/archives/index.html">Archives</a></li>
+    <li><a href="/atom.xml">RSS</a></li>
+    
+    <li>
+    <div id="dark">
+        <form method="get" action="/search.html" id="search">
+            <input name="query" type="text" placeholder="Search..." x-webkit-speech />
+        </form>
+    </div>
+    </li>
+        
+</ul>
+
+
+
+
+</header>
+
+<div id="toload">
+<!-- begin toload --> 
+    <div id="content" class="inner">
+        <article class="post">
+	<h2 class="title">关于Go语言调度器实现细节的补充分析</h2>
+	<div class="entry-content"><blockquote><p><em>在之前的<a href="http://blog.amalcao.me/blog/2014/05/09/erlang-and-go-de-bing-fa-diao-du-qian-xi/">一篇博文</a>中，简单的介绍了一下Go调度器的原理。而进行了一番深入分析后，发现Go的调度器代码中存在许多值得玩味的细节，不仔细体会可能很难发觉作者的匠心。原本打算再写一篇文章系统的分析一下这些细节，但无意中发现了另一位爱好Go的朋友已经做类似的工作，并且结构非常清晰，内容也较准确（链接在<a href="https://github.com/tiancaiamao/go-internals">这里</a>），为了避免造成雷同就放弃了之前的计划，转而罗列一些个人认为的Go语言中比较有意思的点，分别展开介绍一下。文章结构随性，如果感觉缺少联系，请参考其他资料。</em></p></blockquote>
+
+<h2>Goroutine 状态的演变</h2>
+
+<p>在讲解操作系统进程调度的部分时，几乎所有的书籍都会先列出一张进程的状态迁移图，通过状态图，能很清晰的把进程调度的每个环节串联起来，方便理解。</p>
+
+<p>Go运行时的调度器其实可以看成OS调度器的某种简化版本，一个goroutine在其生命周期之中，同样包含了各种状态的变换。弄清了这些状态及状态间切换的原理，对搞清整个Go调度器会非常有帮助。</p>
+
+<p>好了，以下是我总结的一张goroutine的状态迁移图，圆形框表示状态，箭头及文字信息表示切换的方向和条件：</p>
+
+<p><img class="center" src="/images/2014/goroutine_states.jpeg"></p>
+
+<p>下面来简单分析一下， 其中状态 <code>Gidle</code> 在Go调度器代码中并没有被真正被使用到，所以直接忽略。事实上，一旦runtime新建了一个goroutine结构，就会将其状态置为<code>Grunnable</code>并加入到任务队列中，因此我们以该状态作为起点进行介绍：</p>
+
+<ul>
+<li><p><code>Grunnable</code>: Go 语言中，包括用户入口函数<code>main·main</code>的执行goroutine在内的所有任务，都是通过<code>runtime·newproc</code>/<code>runtime·newproc1</code> 这两个函数创建的，前者其实就是对后者的一层封装，提供可变参数支持，Go语言的<code>go</code>关键字最终会被编译器映射为对<code>runtime·newproc</code>的调用。当<code>runtime·newproc1</code>完成了资源的分配及初始化后，新任务的状态会被置为<code>Grunnable</code>，然后被添加到当前 <code>P</code> 的私有任务队列中，等待调度执行。</p>
+
+<p>  从图中我们可以看到，还有几条通向<code>Grunnable</code>的路径：当某个阻塞任务（状态为<code>Gwaiting</code>）的等待条件满足而被唤醒时——如一个任务<strong>G#1</strong>向某个channel写入数据将唤醒之前等待读取该channel数据的任务<strong>G#2</strong>——<strong>G#1</strong>通过调用<code>runtime·ready</code>将<strong>G#2</strong>状态重新置为<code>Grunnable</code>并添加到任务队列中。关于任务阻塞，稍后还很详细介绍。另外的路径是从<code>Grunning</code>和<code>Gsyscall</code>状态变换到<code>Grunnable</code>，我们也都合并到后面介绍。</p>
+
+<p>  总之，处于<code>Grunnable</code>的任务一定在某个任务队列中，随时等待被调度执行。</p></li>
+<li><p><code>Grunning</code>: 所有状态为<code>Grunnable</code>的任务都可能通过<code>findrunnable</code>函数被调度器（P&amp;M）获取，进而通过<code>execute</code>函数将其状态切换到<code>Grunning</code>, 最后调用<code>runtime·gogo</code>加载其上下文并执行。</p>
+
+<p>  前面讲过Go本质采用一种协作式调度方案，一个正在运行的任务，需要通过调用<code>yield</code>的方式显式让出处理器；在Go1.2之后，运行时也开始支持一定程度的任务抢占——当系统线程<code>sysmon</code>发现某个任务执行时间过长或者runtime判断需要进行垃圾收集时，会将任务置为”可被抢占“的，当该任务下一次函数调用时，就会让出处理器并重新切会到<code>Grunnable</code>状态。关于Go1.2中抢占机制的实现细节，后面又机会再做介绍。</p></li>
+<li><p><code>Gsyscall</code>: 这个状态其实在介绍调度器那篇文章中就已经提及了——Go运行时为了保证高的并发性能，当会在任务执行OS系统调用前，先调用<code>runtime·entersyscall</code>函数将自己的状态置为<code>Gsyscall</code>——如果系统调用是阻塞式的或者执行过久，则将当前<code>M</code>与<code>P</code>分离——当系统调用返回后，执行线程调用<code>runtime·exitsyscall</code>尝试重新获取<code>P</code>，如果成功且当前任务没有被抢占，则将状态切回<code>Grunning</code>并继续执行；否则将状态置为<code>Grunnable</code>，等待再次被调度执行。</p></li>
+<li><p><code>Gwaiting</code>: 当一个任务需要的资源或运行条件不能被满足时，需要调用<code>runtime·park</code>函数进入该状态，之后除非等待条件满足，否则任务将一直处于等待状态不能执行。除了之前举过的channel的例子外，Go语言的定时器、网络IO操作都可能引起任务的阻塞。</p>
+
+<p>  <code>runtime·park</code>函数包含3个参数，第一个是解锁函数指针，第二个是一个Lock指针，最后是一个字符串用以描述阻塞的原因。</p>
+
+<p>  很明显，前两个参数是配对的结构——由于任务阻塞前可能获得了某些Lock，这些Lock必须在任务状态保存完成后才能释放，以避免数据竞争。我们知道channel必须通过Lock确保互斥访问，一个阻塞的任务<strong>G#1</strong>需要将自己放到channel的等待队列中，如果在完成上下文保存前就释放了Lock，则可能导致<strong>G#2</strong>将未知状态的<strong>G#1</strong>置为<code>Grunnable</code>，因此释放Lock必须在<code>runtime·park</code>内完成。</p>
+
+<p>  由于阻塞时任务持有的Lock类型不尽相同——如Select操作的锁实际上是一组Lock的集合——因此需要特别指出Unlock的具体方式。</p>
+
+<p>  最后一个参数主要是在gdb调试的时候方便发现任务阻塞的原因。</p>
+
+<p>  顺便说一下，当所有的任务都处于<code>Gwaiting</code>状态时，也就表示当前程序进入了死锁态，不可能继续执行了，那么runtime会检测到这种情况，并输出所有<code>Gwaiting</code>任务的backtrace信息。</p></li>
+<li><p><code>Gdead</code>: 最后，当一个任务执行结束后，会调用<code>runtime·goexit</code>结束自己的生命——将状态置为<code>Gdead</code>，并将结构体链到一个属于当前<code>P</code>的空闲<code>G</code>链表中，以备后续使用。</p>
+
+<p>  Go语言的并发模型基本上遵照了<a href="https://en.wikipedia.org/wiki/Communicating_sequential_processes">CSP模型</a>，goroutine间完全靠channel通信，没有像Unix进程的<code>wait</code>或<code>waitpid</code>的等待机制，也没有类似“POSIX Thread”中的<code>pthread_join</code>的汇合机制，更没有像<code>kill</code>或<code>signal</code>这类的中断机制。每个goroutine结束后就自行退出销毁，不留一丝痕迹。</p></li>
+</ul>
+
+
+<h2>深入任务切换 —— m->g0和runtime·mcall的妙用</h2>
+
+<p>通过上面的分析，相信大家已经基本理清了goroutine执行的线索。
+现在让我们再仔细观察一下状态切换的过程，首先，以<code>Grunning</code>状态为中心来看，把状态切换先粗略的分为两大类——</p>
+
+<ol>
+<li>由<code>Grunning</code>变为其他状态，即goroutine退出（“用户态”）执行；</li>
+<li>由其他状态变为<code>Grunning</code>状态，即被调度执行</li>
+</ol>
+
+
+<p>第一类是由当前活跃的goroutine主动调用runtime相关函数完成的，是主动的；而第二类则是由runtime或其他goroutine完成的，是被动的。</p>
+
+<p>对于第一类，其实还可以细分 —— 到<code>Gsyscall</code>的情况我们以后讨论，先来看其他几种情况，分别是：</p>
+
+<ul>
+<li>调用<code>runtime·sched</code>主动让出处理器，其实就对应于Go语言的<code>yield</code>关键字，状态切换到<code>Grunnable</code></li>
+<li>调用<code>runtime.park</code>阻塞，状态切换到<code>Gwaiting</code></li>
+<li>调用<code>runtime·goexit</code>结束，状态切换到<code>Gdead</code></li>
+</ul>
+
+
+<p>看一下这几个函数的实现，发现它们不过是一层封装，以<code>runtime·park</code>为例，最终会调用<code>runtime·mcall(park0)</code>完成真正的任务，代码如下：</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="kt">void</span>
+</span><span class='line'><span class="n">runtime</span><span class="err">·</span><span class="n">park</span><span class="p">(</span><span class="kt">void</span><span class="p">(</span><span class="o">*</span><span class="n">unlockf</span><span class="p">)(</span><span class="n">Lock</span><span class="o">*</span><span class="p">),</span> <span class="n">Lock</span> <span class="o">*</span><span class="n">lock</span><span class="p">,</span> <span class="n">int8</span> <span class="n">reason</span><span class="p">)</span>
+</span><span class='line'><span class="p">{</span>
+</span><span class='line'>  <span class="n">m</span><span class="o">-&gt;</span><span class="n">waitlock</span> <span class="o">=</span> <span class="n">lock</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">m</span><span class="o">-&gt;</span><span class="n">waitunlockf</span> <span class="o">=</span> <span class="n">unlockf</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">g</span><span class="o">-&gt;</span><span class="n">waitreason</span> <span class="o">=</span> <span class="n">reason</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">runtime</span><span class="err">·</span><span class="n">mcall</span><span class="p">(</span><span class="n">park0</span><span class="p">);</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>其他几个也类似，分别调用了<code>runtime·mcall(sched0)</code>和<code>runtime·mcall(goexit0)</code>。</p>
+
+<p>先来看看这个<code>runtime·mcall</code>函数的功能。它具体定义在<code>src/pkg/runtime/asm_[arm|amd64|386].s</code>中，是用汇编语言实现的。以下是截取该文件中对<code>mcall</code>函数的注释：</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="c1">// void mcall(void (*fn)(G*))</span>
+</span><span class='line'><span class="c1">// Switch to m-&gt;g0&#39;s stack, call fn(g).</span>
+</span><span class='line'><span class="c1">// Fn must never return. It should gogo(&amp;g-&gt;sched) to keep running g.</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>这段注释意思简明清楚 —— <code>runtime.mcall</code>函数接受一个以<code>G*</code>为参数的函数指针<code>fn</code>，执行时会先将当前任务<code>g</code>的上下文保存到<code>g-&gt;sched</code>结构中，然后切换到<code>m-&gt;g0</code>的栈空间，再调用<code>fn</code>，参数就是当前任务指针<code>g</code>。对<code>runtime.mcall</code>函数的调用是不会返回的，除非调用<code>gogo(&amp;g-&gt;sched)</code>。</p>
+
+<p>也就是说，在执行<code>runtime.mcall(park0)</code>之后，会进入<code>park0(g)</code>继续执行。我们再看看<code>park0</code>的实现代码：</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="k">static</span> <span class="kt">void</span>
+</span><span class='line'><span class="n">park0</span><span class="p">(</span><span class="n">G</span> <span class="o">*</span><span class="n">gp</span><span class="p">)</span>
+</span><span class='line'><span class="p">{</span>
+</span><span class='line'>  <span class="n">gp</span><span class="o">-&gt;</span><span class="n">status</span> <span class="o">=</span> <span class="n">Gwaitng</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">gp</span><span class="o">-&gt;</span><span class="n">m</span> <span class="o">=</span> <span class="n">nil</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">m</span><span class="o">-&gt;</span><span class="n">curg</span> <span class="o">=</span> <span class="n">nil</span><span class="p">;</span>
+</span><span class='line'>  <span class="k">if</span> <span class="p">(</span><span class="n">m</span><span class="o">-&gt;</span><span class="n">waitunlockf</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>      <span class="n">m</span><span class="o">-&gt;</span><span class="n">waitunlockf</span><span class="p">(</span><span class="n">m</span><span class="o">-&gt;</span><span class="n">waitlock</span><span class="p">);</span>
+</span><span class='line'>      <span class="n">m</span><span class="o">-&gt;</span><span class="n">waitunlockf</span> <span class="o">=</span> <span class="n">nil</span><span class="p">;</span>
+</span><span class='line'>      <span class="n">m</span><span class="o">-&gt;</span><span class="n">waitlock</span> <span class="o">=</span> <span class="n">nil</span><span class="p">;</span>
+</span><span class='line'>  <span class="p">}</span>
+</span><span class='line'>  <span class="k">if</span> <span class="p">(</span><span class="n">m</span><span class="o">-&gt;</span><span class="n">lockedg</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>      <span class="n">stoplckedm</span><span class="p">();</span>
+</span><span class='line'>      <span class="n">execute</span><span class="p">(</span><span class="n">gp</span><span class="p">);</span> <span class="c1">// Never return</span>
+</span><span class='line'>  <span class="p">}</span>
+</span><span class='line'>  <span class="n">schedule</span><span class="p">();</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>这个函数的功能也很简单：</p>
+
+<ol>
+<li>将<code>gp</code>状态切换到<code>Gwaitng</code></li>
+<li>将<code>gp</code>和<code>m</code>分离</li>
+<li>释放在用户态时持有的锁（如果有的话）</li>
+<li>最后，如果<code>m</code>与<code>gp</code>是强制绑定的，那么<code>m</code>线程会等待<code>gp</code>状态变为<code>Grunnable</code>后再将其调度执行；否则直接调用<code>schedule</code>重新选择可执行的任务</li>
+</ol>
+
+
+<p>其他几个函数实现也是类似的结构，只需将步骤3替换成对应的操作 —— 对于<code>sched0</code>就是将<code>gp</code>加到全局任务队列里；对于<code>goexit0</code>就是释放、回收<code>gp</code>的资源。</p>
+
+<p>到这里，我们似乎搞清了前因后果，但好像还有什么地方有点模糊 —— 对了，所有这些<code>xxxx0</code>函数为什么都要先切换到<code>m-&gt;g0</code>的栈上执行呢？为什么不可以直接在当前<code>g</code>的栈上执行？那样不是省去了若干次上下文保存、恢复的麻烦吗？</p>
+
+<p>要搞清这个问题，先要看看<code>m-&gt;g0</code>这个结构。我们之前说过，Go中的<code>M</code>对应OS线程，每个<code>M</code>分配时会首先创建一个<code>g0</code>任务，并分配大约8KB大小的栈空间。在线程创建时刻 —— 比如在Linux中，通过<code>clone</code>系统调用 —— 会将<code>g0</code>的栈绑定给对应的OS线程。</p>
+
+<p>前面讲了，每个用户goroutine创建后，都会分配独立的栈（初始大小稍小一些，因为Go的栈是动态可扩展的），执行用户任务就会切换到用户任务的栈上。这样，<code>g0</code>的栈空间实际上就是独立于任何用户任务的，因此可以执行一些不适合在用户栈上执行的程序。这个有点类似OS中用户栈和内核栈的关系。</p>
+
+<p>以<code>sched0</code>为例说明为什么执行goroutine的切换不能在当前<code>g</code>的栈上完成。</p>
+
+<p>假设我们这么做，那么首先要保存<code>g</code>的上下文状态到<code>g-&gt;sched</code>结构体中，然后从任务队列中选择另一个状态为<code>Grunnable</code>的任务<code>g1</code>，在将上下文切换到<code>g1</code>之前，我们需要先将<code>g</code>放回任务队列中，以便它未来还能被调度执行，然后<strong>M#1</strong>切换到<code>g1</code> —— 注意，问题来了！由于Go的runtime是多线程的，因此可能同时存在多个执行线程，一旦<code>g</code>进入队列，那么它完全可能被另一个线程<strong>M#2</strong>调度执行。这时，<strong>M#1</strong>和<strong>M#2</strong>实际上都运行在<code>g</code>的栈上（<strong>goroutine切换不是“原子操作”!</strong>），就可能出现数据竞争从而导致错误！</p>
+
+<p>而利用<code>m-&gt;g0</code>的栈进行<code>sched0</code>这样的操作，由于不同的线程有各自独立的<code>g0</code>及栈空间，因而不会发生数据竞争问题。</p>
+
+<h3>runtime·mcall 的另一个用途</h3>
+
+<p>除了进行goroutine切换外，<code>runtime·mcall</code>还有一个功能，就是可以委托处理栈空间分配。具体来说，当一个任务通过<code>go</code>关键字新建任务时 —— 我们知道该操作最终会映射到<code>runtime·newproc1</code>函数 —— 那么就会涉及调用<code>runtime·mstackalloc</code>对新建任务分配栈空间的操作。</p>
+
+<p>Go 1.2 的用户任务采用了“分段式栈”的实现方案，其栈空间是根据需要动态扩展的，每个函数调用点都会判断当前栈空间是否满足需要，如果不够就要追加分配。要确保调用<code>runtime·mstackalloc</code>时不会再出现栈分配的情形，就不能直接在用户空间上运行该函数。现在，我们很容易想到的就是利用<code>runtime·mcall</code>切换到<code>g0</code>上执行栈分配！因为<code>g0</code>的初始栈空间比较大，可以认为能够满足调用需要。</p>
+
+<p>与之前<code>xxxx0</code>函数情况略有不同，在分配完栈空间后，我们希望马上切换会刚才的<code>g</code>，而不是触发新的调度，因此，必须直接调用<code>runtime·gogo(&amp;g-&gt;sched)</code>返回——这点在<code>runtime·mcall</code>的注释中也说得很明白。</p>
+
+<h2>待续&hellip;</h2>
+
+<p>今天初步把Go语言任务状态变化串讲了一下，更重要的是把<code>m-&gt;g0</code>和<code>runtime·mcall</code>这两个结构分析了一下。本来还想继续介绍一下有关<code>Gsyscall</code>状态的一些细节，不过看看时间已经接近凌晨2点了，再不休息估计明天上班会很辛苦。所以就把这个话题，连同之前讲channel时没有深入分析的“定时器”机制一起放在后面完成。</p>
+
+<hr />
+
+<p><em>限于个人水平，本文内容不免谬误之处，欢迎大家致信我的邮箱amalcaowei@gmail.com或在讨论版留言！</em></p>
+</div>
+
+<div class="meta">
+	
+		<span class="comments"><a href="/blog/2014/05/16/guan-yu-goyu-yan-diao-du-qi-shi-xian-xi-jie-de-bu-chong-fen-xi/#disqus_thread">Comments</a></span>
+	
+</div>
+</article>
+
+	<div class="share">
+	<div class="addthis_toolbox addthis_default_style ">
+	
+	
+	<a class="addthis_button_tweet"></a>
+	
+	
+	<a class="addthis_counter addthis_pill_style"></a>
+	</div>
+  <script type="text/javascript" src="http://s7.addthis.com/js/250/addthis_widget.js#pubid="></script>
+</div>
+
+
+
+<section id="comment">
+    <h2 class="title">Comments</h2>
+    <div id="disqus_thread" aria-live="polite"><noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+</div>
+</section>
+
+    </div>
+    <footer id="footer">
+    <div style="display:inline">
+    Copyright &copy; 2016
+
+    Amal Cao
+. Powered by <a href="http://octopress.org">Octopress</a> | 
+    Theme <a href="http://github.com/panks/fabric">fabric</a> by <a href="http://panks.me">Pankaj Kumar</a>
+</div>
+
+
+    </footer>
+    <script src="/javascripts/fabric.js"></script>
+<script src="/javascripts/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+(function($){
+	$('.fancybox').fancybox();
+})(jQuery);
+</script> <!-- Delete or comment this line to disable Fancybox -->
+
+
+<script type="text/javascript">
+      var disqus_shortname = 'amalsblog';
+      
+        
+        // var disqus_developer = 1;
+        var disqus_identifier = 'http://amalcao.github.io/blog/2014/05/16/guan-yu-goyu-yan-diao-du-qi-shi-xian-xi-jie-de-bu-chong-fen-xi/';
+        var disqus_url = 'http://amalcao.github.io/blog/2014/05/16/guan-yu-goyu-yan-diao-du-qi-shi-xian-xi-jie-de-bu-chong-fen-xi/';
+        var disqus_script = 'embed.js';
+      
+    (function () {
+      var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+      dsq.src = 'http://' + disqus_shortname + '.disqus.com/' + disqus_script;
+      (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    }());
+</script>
+
+
+
+
+
+<!-- end toload --> 
+</div>
+</div>
+<script src="/javascripts/jquery.ui.totop.js" type="text/javascript"></script>
+<script type="text/javascript">
+/*<![CDATA[*/
+;(function($){$().UItoTop({easingType:'easeOutCirc'});})(jQuery); 
+/*]]>*/
+</script><!-- remove it to remove the scroll to top button -->
+</body>
+</html>

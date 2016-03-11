@@ -1,0 +1,212 @@
+
+<!DOCTYPE HTML>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>构建C协程之概述 - AmaL'sbLoG</title>
+    <meta name="author" content="Amal Cao">
+    
+	<meta name="description" content="从本篇开始，打算开启一个系列，专门介绍C语言环境下各种协程系统的实现机制，算是对前阶段工作的一个系统总结吧！
+目前的计划是根据实现机制的不同，分成两到三篇来介绍，具体的案例主要以 Go 和 Cilkplus 这两门语言的运行时环境为主，同时结合其他一些个人觉得比较有新意的小型开源系统。
+另外， &hellip;">
+	
+	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+	<link href="/atom.xml" rel="alternate" title="AmaL'sbLoG" type="application/atom+xml">
+	<link rel="canonical" href="">
+	<link href="/favicon.ico" rel="shortcut icon">
+    <link href="/stylesheets/screen.css" media="screen, projection" rel="stylesheet" type="text/css">
+
+    <link href='http://fonts.googleapis.com/css?family=Slackey' rel='stylesheet' type='text/css'>
+    <link href='http://fonts.googleapis.com/css?family=Fjalla+One' rel='stylesheet' type='text/css'>
+    <link href='http://fonts.googleapis.com/css?family=Amethysta' rel='stylesheet' type='text/css'>
+	<script src="//ajax.googleapis.com/ajax/libs/jquery/1.8.2/jquery.min.js"></script>
+    <!--[if lt IE 9]><script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script><![endif]-->
+
+    <script type="text/javascript" src="/javascripts/jquery-tapir.js"></script>
+
+    <!-- remove or comment it to disable ajaxification -->   
+    <script src="/javascripts/ajaxify.js"></script>
+   
+    
+    
+
+</head>
+
+
+<body>
+    <div id="wrapper">
+    <header id="header" class="inner"><!-- for more effects see _animate.scss -->
+<h1 class="animated bounceInDown">
+    <div id="headerbg">
+        Amal Cao
+    </div>
+</h1>
+<br>
+
+<ul id="social-links" style="text-align:center">
+  
+  
+  <!-- Google Plus -->
+  <li>
+  <a href="http://plus.google.com/u/0/115894150619087578630?rel=author" class="google" title="Google+"></a>
+  </li>
+  
+  
+  
+  
+  
+  
+  
+</ul>
+
+
+<!-- use full url including 'index.html' for navigation bar if you are using ajax -->
+<ul id="nav">
+	<li id="ajax"><a href="/index.html">Home</a></li>
+	<li id="ajax"><a href="/blog/archives/index.html">Archives</a></li>
+    <li><a href="/atom.xml">RSS</a></li>
+    
+    <li>
+    <div id="dark">
+        <form method="get" action="/search.html" id="search">
+            <input name="query" type="text" placeholder="Search..." x-webkit-speech />
+        </form>
+    </div>
+    </li>
+        
+</ul>
+
+
+
+
+</header>
+
+<div id="toload">
+<!-- begin toload --> 
+    <div id="content" class="inner">
+        <article class="post">
+	<h2 class="title">构建C协程之概述</h2>
+	<div class="entry-content"><blockquote><p> <em>从本篇开始，打算开启一个系列，专门介绍C语言环境下各种协程系统的实现机制，算是对前阶段工作的一个系统总结吧！
+目前的计划是根据实现机制的不同，分成两到三篇来介绍，具体的案例主要以 Go 和 Cilkplus 这两门语言的运行时环境为主，同时结合其他一些个人觉得比较有新意的小型开源系统。
+另外，最近陆陆续续分析了很多开源并发系统的代码，希望也能抽时间好好总结一下。</em></p></blockquote>
+
+<h1>什么是“协程”？</h1>
+
+<p>“协程”（“coroutine”），有时也叫做“用户线程”、“纤程” （“fiber”）等，是一种轻量级用户执行线索，其特点是调度和切换都发生在用户态，无需内核干预，因此切换代价较小，特别适合实现一些高并发类的系统应用 —— 比如 Web 服务器 —— 每个链接的服务历程都可以用“协程”来实现，当某个链接遇到I/O阻塞时，可以快速切换到其他执行线索，从而大大提高了系统整体的吞吐率。</p>
+
+<p>由于系统的调度器和执行线索都处于“用户态”，调度器通常无法中断某个运行中的“协程”，因此通常来说，“协程”的调度器往往采用“协作调度”策略 —— 即执行中的“协程” 需要显式调用类似<code>yeild</code> 这样的方法来让出处理器资源，以便其他任务执行。 这也就是“协程”得名的原因。</p>
+
+<p>当然，对于一些语言，比如 Erlang，由于采用基于指令虚拟机的实现方式，调度器通常实现在虚拟机层，仍然能够控制用户级任务的执行，因此 Erlang 的轻量进程是采用“分时调度”的。但我们这里仅讨论一般意义上的“协程”，且主要基于C语言的实现，所以仍以“协作调度”为主。</p>
+
+<h2>类似系统</h2>
+
+<p>一种类似的方案是采用“异步+回调”的方式，比如<a href="http://libevent.org">libevent</a>，<a href="http://nodejs.org">node.js</a>之类框架，其本质是将用户任务的粒度降低到以函数为单位，系统后台启动多个工作线程，通过“事件驱动”的方式异步的从任务队列中取出并执行这些回调函数。</p>
+
+<p>这类方案的底层系统实现起来相对比较简单，理论上也非常高效，但要求用户程序以异步方式编写，给用户程序开发、代码维护、调试等带来了一些问题。
+而基于“协程”的系统，所有用户任务都是“同步”的，也就是完全按照实际执行时序编程，降低了用户程序开发、调试、维护的开销。</p>
+
+<h1>基于C语言的实现模型</h1>
+
+<p>早期的构建在C语言之上“协程”库往往仅包含一个执行的OS线程，多个用户任务都在该线程上分时执行，是一种 “N:1” 的映射模式。
+典型的例子是<a href="http://swtch.com/libtask/">libtask</a>。由于调度器实际上是串行执行的，无需考虑复杂的线程同步问题，所以实现起来就比较简单。</p>
+
+<p>近年来，随着多核乃至众核处理器的大规模出现和普及，使得原来基于 “N:1” 的模型无法满足系统的可扩展性需求。
+因此业界提出了很多基于多核架构的协程系统方案，即所谓 “M:N” 模型 —— 多个“协程”可以映射到多个OS线程执行，也就是说在多核平台上，不同的“协程”能实现真正意义上的“并行”执行。</p>
+
+<p>本质上来说，Google开发的Go语言和Intel主导开发的Cilkplus语言都是 “M:N” 的代表——虽然它们表面上都是新的语言，但调度器核心，即运行时环境（runtime）都是基于C（及部分C++）语言的。
+所以，这两个runtime系统将作为“构建C协程”这个系列里，重点关注的对象。</p>
+
+<h2>实现方式分类</h2>
+
+<p>总结起来，用C语言实现协程的主要方案包括三类：</p>
+
+<ol>
+<li><p>利用标准C提供的<a href="http://en.wikipedia.org/wiki/Setjmp">setjmp/long_jmp</a>机制，比如<a href="https://code.google.com/p/libconcurrency/">libconcurrency</a>，以及前面讲的<a href="https://github.com/cilkplus/compiler-rt/tree/cilkplus/lib/cilk">Cilkplus的运行时环境</a>均属此类。<strong>这种方式的优点是可移植性好，理论上只要平台提供C标准库就可以移植，并且“协程”切换效率相对比较高。但同时，对其流程把握通常比较困难，也很难为每个协程实现独立的运行栈。</strong></p></li>
+<li><p>利用GNU C库提供的<a href="http://en.wikipedia.org/wiki/Setcontext">ucontext</a>机制；或者使用Windows平台提供的<a href="http://en.wikipedia.org/wiki/Fiber_(computer_science">Fiber</a>机制。<strong>这种方式的优点是流程清晰，编程思路简单；但是可移植性和切换效率欠佳。</strong></p></li>
+<li><p>利用C的switch/goto等语句的巧妙组合，可以用少量的代码实现简单的协程支持，比如<a href="http://dunkels.com/adam/pt/index.html">Protothreads</a>项目，其实现非常简单，号称“蝇量级”。<strong>但可扩展性不好，不适合移植到多核等复杂系统，因此就不在本系列中详述了，感兴趣者请参考 &ldquo;Protothreads&rdquo; <a href="http://dunkels.com/adam/download">代码</a>及相关<a href="http://coolshell.cn/articles/10975.html">分析</a>。</strong></p></li>
+</ol>
+
+
+<p>在后续的文章中，我会针对前两种实现进行分析，主要的参考是采用“setjmp/long_jmp”实现的 Cilkplus 运行时库 <strong>libcilkrts</strong>（Linux版），以及采用“ucontext”实现的 GCC Go 前端运行时库 <strong>libgo</strong> 。 敬请关注！</p>
+</div>
+
+<div class="meta">
+	
+		<span class="comments"><a href="/blog/2014/07/10/cyu-yan-xie-cheng-xi-tong-jie-shao-zhi-yi/#disqus_thread">Comments</a></span>
+	
+</div>
+</article>
+
+	<div class="share">
+	<div class="addthis_toolbox addthis_default_style ">
+	
+	
+	<a class="addthis_button_tweet"></a>
+	
+	
+	<a class="addthis_counter addthis_pill_style"></a>
+	</div>
+  <script type="text/javascript" src="http://s7.addthis.com/js/250/addthis_widget.js#pubid="></script>
+</div>
+
+
+
+<section id="comment">
+    <h2 class="title">Comments</h2>
+    <div id="disqus_thread" aria-live="polite"><noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+</div>
+</section>
+
+    </div>
+    <footer id="footer">
+    <div style="display:inline">
+    Copyright &copy; 2016
+
+    Amal Cao
+. Powered by <a href="http://octopress.org">Octopress</a> | 
+    Theme <a href="http://github.com/panks/fabric">fabric</a> by <a href="http://panks.me">Pankaj Kumar</a>
+</div>
+
+
+    </footer>
+    <script src="/javascripts/fabric.js"></script>
+<script src="/javascripts/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+(function($){
+	$('.fancybox').fancybox();
+})(jQuery);
+</script> <!-- Delete or comment this line to disable Fancybox -->
+
+
+<script type="text/javascript">
+      var disqus_shortname = 'amalsblog';
+      
+        
+        // var disqus_developer = 1;
+        var disqus_identifier = 'http://amalcao.github.io/blog/2014/07/10/cyu-yan-xie-cheng-xi-tong-jie-shao-zhi-yi/';
+        var disqus_url = 'http://amalcao.github.io/blog/2014/07/10/cyu-yan-xie-cheng-xi-tong-jie-shao-zhi-yi/';
+        var disqus_script = 'embed.js';
+      
+    (function () {
+      var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+      dsq.src = 'http://' + disqus_shortname + '.disqus.com/' + disqus_script;
+      (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    }());
+</script>
+
+
+
+
+
+<!-- end toload --> 
+</div>
+</div>
+<script src="/javascripts/jquery.ui.totop.js" type="text/javascript"></script>
+<script type="text/javascript">
+/*<![CDATA[*/
+;(function($){$().UItoTop({easingType:'easeOutCirc'});})(jQuery); 
+/*]]>*/
+</script><!-- remove it to remove the scroll to top button -->
+</body>
+</html>

@@ -1,0 +1,243 @@
+
+<!DOCTYPE HTML>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>构建C协程之ucontext篇（上） - AmaL'sbLoG</title>
+    <meta name="author" content="Amal Cao">
+    
+	<meta name="description" content="原理简介 所谓 “ucontext” 机制是 GNU C 库提供的一组用于创建、保存、切换用户态执行“上下文”（context）的API，可以看作是 “setjmp/long_jmp” 的“升级版”，主要包括以下四个函数： void makecontext(ucontext_t *ucp, &hellip;">
+	
+	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+	<link href="/atom.xml" rel="alternate" title="AmaL'sbLoG" type="application/atom+xml">
+	<link rel="canonical" href="">
+	<link href="/favicon.ico" rel="shortcut icon">
+    <link href="/stylesheets/screen.css" media="screen, projection" rel="stylesheet" type="text/css">
+
+    <link href='http://fonts.googleapis.com/css?family=Slackey' rel='stylesheet' type='text/css'>
+    <link href='http://fonts.googleapis.com/css?family=Fjalla+One' rel='stylesheet' type='text/css'>
+    <link href='http://fonts.googleapis.com/css?family=Amethysta' rel='stylesheet' type='text/css'>
+	<script src="//ajax.googleapis.com/ajax/libs/jquery/1.8.2/jquery.min.js"></script>
+    <!--[if lt IE 9]><script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script><![endif]-->
+
+    <script type="text/javascript" src="/javascripts/jquery-tapir.js"></script>
+
+    <!-- remove or comment it to disable ajaxification -->   
+    <script src="/javascripts/ajaxify.js"></script>
+   
+    
+    
+
+</head>
+
+
+<body>
+    <div id="wrapper">
+    <header id="header" class="inner"><!-- for more effects see _animate.scss -->
+<h1 class="animated bounceInDown">
+    <div id="headerbg">
+        Amal Cao
+    </div>
+</h1>
+<br>
+
+<ul id="social-links" style="text-align:center">
+  
+  
+  <!-- Google Plus -->
+  <li>
+  <a href="http://plus.google.com/u/0/115894150619087578630?rel=author" class="google" title="Google+"></a>
+  </li>
+  
+  
+  
+  
+  
+  
+  
+</ul>
+
+
+<!-- use full url including 'index.html' for navigation bar if you are using ajax -->
+<ul id="nav">
+	<li id="ajax"><a href="/index.html">Home</a></li>
+	<li id="ajax"><a href="/blog/archives/index.html">Archives</a></li>
+    <li><a href="/atom.xml">RSS</a></li>
+    
+    <li>
+    <div id="dark">
+        <form method="get" action="/search.html" id="search">
+            <input name="query" type="text" placeholder="Search..." x-webkit-speech />
+        </form>
+    </div>
+    </li>
+        
+</ul>
+
+
+
+
+</header>
+
+<div id="toload">
+<!-- begin toload --> 
+    <div id="content" class="inner">
+        <article class="post">
+	<h2 class="title">构建C协程之ucontext篇（上）</h2>
+	<div class="entry-content"><h1>原理简介</h1>
+
+<p>所谓 “ucontext” 机制是 GNU C 库提供的一组用于创建、保存、切换用户态执行“上下文”（context）的API，可以看作是 “setjmp/long_jmp” 的“升级版”，主要包括以下四个函数：</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="kt">void</span> <span class="n">makecontext</span><span class="p">(</span><span class="n">ucontext_t</span> <span class="o">*</span><span class="n">ucp</span><span class="p">,</span> <span class="kt">void</span> <span class="p">(</span><span class="o">*</span><span class="n">func</span><span class="p">)(),</span> <span class="kt">int</span> <span class="n">argc</span><span class="p">,</span> <span class="p">...);</span>
+</span><span class='line'><span class="kt">int</span> <span class="n">swapcontext</span><span class="p">(</span><span class="n">ucontext_t</span> <span class="o">*</span><span class="n">oucp</span><span class="p">,</span> <span class="n">ucontext_t</span> <span class="o">*</span><span class="n">ucp</span><span class="p">);</span>
+</span><span class='line'><span class="kt">int</span> <span class="n">getcontext</span><span class="p">(</span><span class="n">ucontext_t</span> <span class="o">*</span><span class="n">ucp</span><span class="p">);</span>
+</span><span class='line'><span class="kt">int</span> <span class="n">setcontext</span><span class="p">(</span><span class="k">const</span> <span class="n">ucontext_t</span> <span class="o">*</span><span class="n">ucp</span><span class="p">);</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>结构体 <code>ucontext_t</code> 和上述4个函数声明一起定义在系统头文件<code>&lt;ucontext.h&gt;</code> 中，该类型的具体实现与体系结构相关，但规范要求其至少要包含以下字段：</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="k">typedef</span> <span class="k">struct</span> <span class="n">ucontext</span> <span class="p">{</span>
+</span><span class='line'>  <span class="k">struct</span> <span class="n">ucontext</span> <span class="o">*</span><span class="n">uc_link</span><span class="p">;</span>
+</span><span class='line'>    <span class="n">sigset_t</span>       <span class="n">uc_sigmask</span><span class="p">;</span>
+</span><span class='line'>    <span class="n">stack_t</span>         <span class="n">uc_stack</span><span class="p">;</span>
+</span><span class='line'>    <span class="n">mcontext_t</span> <span class="n">uc_mcontext</span><span class="p">;</span>
+</span><span class='line'>    <span class="p">...</span>
+</span><span class='line'><span class="p">}</span> <span class="n">ucontext_t</span><span class="p">;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>其中 <code>sigset_t</code> 和 <code>stack_t</code> 定义在标准头文件 <code>&lt;signal.h&gt;</code> 中，
+<code>uc_link</code> 字段保存当前context结束后继续执行的context记录，
+<code>uc_sigmask</code> 记录该context运行阶段需要屏蔽的信号，
+<code>uc_stack</code> 是该context运行的栈信息，
+最后一个字段<code>uc_mcontext</code> 则保存具体的程序执行上下文——如PC值、堆栈指针、寄存器值等信息——其实现方式依赖于底层运行的系统架构，是平台、硬件相关的。</p>
+
+<p>下面具体来看每个函数的功能：</p>
+
+<ul>
+<li><p><code>int makecontext(ucontext_t *ucp, void (*func)(), int argc, ...)</code>
+  该函数用以初始化一个<strong>ucontext_t</strong>类型的结构，也就是我们所说的用户执行上下文。函数指针func指明了该context的入口函数，argc指明入口参数个数，该值是可变的，但每个参数类型都是int型，这些参数紧随argc传入。
+另外，在调用makecontext之前，一般还需要显式的指明其初始栈信息（栈指针SP及栈大小）和运行时的信号屏蔽掩码（signal mask）。
+同时也可以指定uc_link字段，这样在func函数返回后，就会切换到uc_link指向的context继续执行。</p></li>
+<li><p><code>int setcontext(const ucontext_t *ucp)</code>
+  该函数用来将当前程序执行线索切换到参数<code>ucp</code>所指向的上下文状态，在执行正确的情况下，该函数直接切入到新的执行状态，不再会返回。比如我们用上面介绍的makecontext初始化了一个新的上下文，并将入口指向某函数<code>entry()</code>，那么setcontext成功后就会马上运行<code>entry()</code>函数。</p></li>
+<li><p><code>int getcontext(ucontext_t *ucp)</code>
+  该函数用来将当前执行状态上下文保存到一个<strong>ucontext_t</strong>结构中，若后续调用setcontext或swapcontext恢复该状态，则程序会沿着getcontext调用点之后继续执行，<strong>看起来好像刚从getcontext函数返回一样。</strong> 这个操作的功能和setjmp所起的作用类似，都是保存执行状态以便后续恢复执行，但需要重点指出的是：<strong>getcontext函数的返回值仅能表示本次操作是否执行正确，而不能用来区分是直接从getcontext操作返回，还是由于setcontext/swapcontex恢复状态导致的返回，这点与setjmp是不一样的。</strong></p></li>
+<li><p><code>int swapcontext(ucontext_t *oucp, ucontext_t *ucp)</code>
+  理论上，有了上面的3个函数，就可以满足需要了（<em>后面讲的libgo就只用了这3个函数，而实际只需setcontext/getcontext就足矣了</em>），但由于getcontext不能区分返回状态，因此编写上下文切换的代码时就需要保存额外的信息来进行判断，显得比较麻烦。
+为了简化切换操作的实现，ucontext 机制里提供了swapcontext这个函数，用来“原子”地完成旧状态的保存和切换到新状态的工作（当然，这并非真正的原子操作，在多线程情况下也会引入一些调度方面的问题，后面会详细介绍）。
+为了进一步理解swapcontext这个函数的设计目的，可以尝试利用getcontext/setcontext完成同样的功能，你需要怎样编写代码？
+同时，也不妨思考一下下面这段代码的执行结果（该例出自维基百科<a href="http://en.wikipedia.org/wiki/Setcontext">Setcontext 条目</a>）：</p></li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="cp">#include &lt;stdio.h&gt;</span>
+</span><span class='line'><span class="cp">#include &lt;ucontext.h&gt;</span>
+</span><span class='line'><span class="cp">#include &lt;unistd.h&gt;</span>
+</span><span class='line'>
+</span><span class='line'><span class="kt">int</span> <span class="n">main</span><span class="p">(</span><span class="kt">int</span> <span class="n">argc</span><span class="p">,</span> <span class="kt">char</span> <span class="o">*</span><span class="n">argv</span><span class="p">[])</span> <span class="p">{</span>
+</span><span class='line'>  <span class="n">ucontext_t</span> <span class="n">context</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="n">getcontext</span><span class="p">(</span><span class="o">&amp;</span><span class="n">context</span><span class="p">);</span>
+</span><span class='line'>  <span class="n">puts</span><span class="p">(</span><span class="s">&quot;Hello world&quot;</span><span class="p">);</span>
+</span><span class='line'>  <span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+</span><span class='line'>  <span class="n">setcontext</span><span class="p">(</span><span class="o">&amp;</span><span class="n">context</span><span class="p">);</span>
+</span><span class='line'>  <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h1>小结</h1>
+
+<p>可以看出，用ucontext机制实现一个“协程”系统并不困难。
+实际上，每个运行上下文（ucontext_t）就直接对应于“协程”概念，对于协程的“创建”（Create）、“启动” （Spawn）、“挂起” （Suspend）、“切换” （Swap）等操作，很容易通过上面的4个API及其组合加以实现，需要的工作仅在于设计一组数据结构保存暂不运行的context结构，提供一些调度的策略即可。
+这方面的开源实现有很多，其中最著名的就是Go的前身，libtask库。</p>
+
+<p>对于将“协程”映射到多OS线程执行的情形，就要稍稍复杂一些，但主要的问题是集中在共享任务队列的实现、调度线程间的互斥等，至于“协程”的映射问题，与单线程情况没有太大的区别。
+对于这方面的开源借鉴，当然首推Go的运行时 —— 但由于标准Go实现没有使用GNU C库，而是自行设计了包括C编译器在内的整套工具链，因而就没有直接采用ucontext机制（尽管其内部实现机制与ucontext原理类似）。</p>
+
+<p>在下一篇中，会转而分析GCC Go语言前端的运行时实现——libgo。
+libgo的调度器部分基本用C开发并由GCC编译，“goroutine”（Go语言中相对于“协程”的概念）也直接以“ucontext”机制实现，其代码对于分析C语言下“协程”系统实现方法而言，具有较高的参考价值。</p>
+</div>
+
+<div class="meta">
+	
+		<span class="comments"><a href="/blog/2014/07/10/cxie-cheng-zhi-ucontextpian-shang/#disqus_thread">Comments</a></span>
+	
+</div>
+</article>
+
+	<div class="share">
+	<div class="addthis_toolbox addthis_default_style ">
+	
+	
+	<a class="addthis_button_tweet"></a>
+	
+	
+	<a class="addthis_counter addthis_pill_style"></a>
+	</div>
+  <script type="text/javascript" src="http://s7.addthis.com/js/250/addthis_widget.js#pubid="></script>
+</div>
+
+
+
+<section id="comment">
+    <h2 class="title">Comments</h2>
+    <div id="disqus_thread" aria-live="polite"><noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+</div>
+</section>
+
+    </div>
+    <footer id="footer">
+    <div style="display:inline">
+    Copyright &copy; 2016
+
+    Amal Cao
+. Powered by <a href="http://octopress.org">Octopress</a> | 
+    Theme <a href="http://github.com/panks/fabric">fabric</a> by <a href="http://panks.me">Pankaj Kumar</a>
+</div>
+
+
+    </footer>
+    <script src="/javascripts/fabric.js"></script>
+<script src="/javascripts/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+(function($){
+	$('.fancybox').fancybox();
+})(jQuery);
+</script> <!-- Delete or comment this line to disable Fancybox -->
+
+
+<script type="text/javascript">
+      var disqus_shortname = 'amalsblog';
+      
+        
+        // var disqus_developer = 1;
+        var disqus_identifier = 'http://amalcao.github.io/blog/2014/07/10/cxie-cheng-zhi-ucontextpian-shang/';
+        var disqus_url = 'http://amalcao.github.io/blog/2014/07/10/cxie-cheng-zhi-ucontextpian-shang/';
+        var disqus_script = 'embed.js';
+      
+    (function () {
+      var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+      dsq.src = 'http://' + disqus_shortname + '.disqus.com/' + disqus_script;
+      (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    }());
+</script>
+
+
+
+
+
+<!-- end toload --> 
+</div>
+</div>
+<script src="/javascripts/jquery.ui.totop.js" type="text/javascript"></script>
+<script type="text/javascript">
+/*<![CDATA[*/
+;(function($){$().UItoTop({easingType:'easeOutCirc'});})(jQuery); 
+/*]]>*/
+</script><!-- remove it to remove the scroll to top button -->
+</body>
+</html>

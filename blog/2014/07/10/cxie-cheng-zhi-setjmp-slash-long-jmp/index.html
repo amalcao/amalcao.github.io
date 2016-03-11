@@ -1,0 +1,688 @@
+
+<!DOCTYPE HTML>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>构建C协程之setjmp/long_jmp篇 - AmaL'sbLoG</title>
+    <meta name="author" content="Amal Cao">
+    
+	<meta name="description" content="原理简介 在标准C中的头文件&lt;setjmp.h&gt;中定义了一组函数 setjmp / long_jmp 用来实现“非本地跳转”的功能，利用 setjmp 可以保存当前执行线索状态，稍后通过 long_jmp 函数可以实现状态的恢复，并且可以跨多层函数调用栈进行跳转。具体接口定义如下： &hellip;">
+	
+	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+	<link href="/atom.xml" rel="alternate" title="AmaL'sbLoG" type="application/atom+xml">
+	<link rel="canonical" href="">
+	<link href="/favicon.ico" rel="shortcut icon">
+    <link href="/stylesheets/screen.css" media="screen, projection" rel="stylesheet" type="text/css">
+
+    <link href='http://fonts.googleapis.com/css?family=Slackey' rel='stylesheet' type='text/css'>
+    <link href='http://fonts.googleapis.com/css?family=Fjalla+One' rel='stylesheet' type='text/css'>
+    <link href='http://fonts.googleapis.com/css?family=Amethysta' rel='stylesheet' type='text/css'>
+	<script src="//ajax.googleapis.com/ajax/libs/jquery/1.8.2/jquery.min.js"></script>
+    <!--[if lt IE 9]><script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script><![endif]-->
+
+    <script type="text/javascript" src="/javascripts/jquery-tapir.js"></script>
+
+    <!-- remove or comment it to disable ajaxification -->   
+    <script src="/javascripts/ajaxify.js"></script>
+   
+    
+    
+
+</head>
+
+
+<body>
+    <div id="wrapper">
+    <header id="header" class="inner"><!-- for more effects see _animate.scss -->
+<h1 class="animated bounceInDown">
+    <div id="headerbg">
+        Amal Cao
+    </div>
+</h1>
+<br>
+
+<ul id="social-links" style="text-align:center">
+  
+  
+  <!-- Google Plus -->
+  <li>
+  <a href="http://plus.google.com/u/0/115894150619087578630?rel=author" class="google" title="Google+"></a>
+  </li>
+  
+  
+  
+  
+  
+  
+  
+</ul>
+
+
+<!-- use full url including 'index.html' for navigation bar if you are using ajax -->
+<ul id="nav">
+	<li id="ajax"><a href="/index.html">Home</a></li>
+	<li id="ajax"><a href="/blog/archives/index.html">Archives</a></li>
+    <li><a href="/atom.xml">RSS</a></li>
+    
+    <li>
+    <div id="dark">
+        <form method="get" action="/search.html" id="search">
+            <input name="query" type="text" placeholder="Search..." x-webkit-speech />
+        </form>
+    </div>
+    </li>
+        
+</ul>
+
+
+
+
+</header>
+
+<div id="toload">
+<!-- begin toload --> 
+    <div id="content" class="inner">
+        <article class="post">
+	<h2 class="title">构建C协程之setjmp/long_jmp篇</h2>
+	<div class="entry-content"><h1>原理简介</h1>
+
+<p>在标准C中的头文件<code>&lt;setjmp.h&gt;</code>中定义了一组函数 setjmp / long_jmp 用来实现“非本地跳转”的功能，利用 setjmp 可以保存当前执行线索状态，稍后通过 long_jmp 函数可以实现状态的恢复，并且可以跨多层函数调用栈进行跳转。具体接口定义如下：</p>
+
+<ul>
+<li><p><code>int setjmp(jmp_buf env)</code>
+  该函数主要用来保存当前执行状态，作为后续跳转的目标。调用时，当前状态会被存放在<code>env</code>指向的结构中，<code>env</code>将被 long_jmp 操作作为参数，以返回调用点 &mdash; 跳转的结果看起来就好像刚从setjmp返回一样。
+<strong>直接调用setjmp保存状态后，返回值是0；而从long_jmp操作返回时，返回值是非0的 &mdash; 通过判断setjmp的返回值，就可以判断当前执行状态。</strong></p></li>
+<li><p><code>void long_jmp(jmp_buf env, int value)</code>
+  该函数用来恢复<code>env</code>中保存的执行状态，另一参数<code>value</code>用来传递返回值给跳转目标 &mdash; 如果<code>value</code>值为0，则跳转后返回setjmp处的值为1；否则，返回setjmp处的值为<code>value</code>。</p></li>
+</ul>
+
+
+<p>setjmp / long_jmp 这一机制的设计初衷是为了方便程序从较深的调用栈中直接返回到之前调用点 &mdash; 这非常有利于实现高效的错误处理机制，比如 C++ 中的异常机制就是如此。假设我们有这样一条调用路径：</p>
+
+<p><code>fun0() -&gt; fun1() -&gt; fun2() -&gt; ... -&gt; funN()</code></p>
+
+<p>假设在 funN 函数中发生了一个错误，需要返回 fun0 函数对错误进行处理，按照惯常的方法需要层层返回错误，效率较低。利用 setjmp / long_jmp 机制，就可以在 fun0 函数调用 fun1 前用 setjmp 保存一个状态，然后一旦调用路径中的某个环节出现错误，就使用 long_jmp 跳回 fun0 函数，通过 setjmp 的返回值就可以判断错误类型并做后续处理，非常简便，与 C++ / Java 等语言中的 <code>try {...} catch (...) {...}</code> 结构很类似。</p>
+
+<p>这里需要注意的是，long_jmp 返回后的执行依赖于之前 setjmp 执行时的栈环境，在上面的例子中，由于 funN 执行跳转时，fun0 的执行栈没有释放，因此返回后继续执行没有任何问题。
+<strong>但假如在 fun0 返回后（更精确的说是执行 setjmp 的作用域退出后），再通过 long_jmp 跳转回 fun0， 由于原先栈帧（stack frame）已被释放，其对应内存空间可能别做他用，因而这时程序的执行就进入了不可知状态，很可能因起错误，这点需要特别注意！</strong></p>
+
+<p>setjmp 会将状态信息保存到一个平台相关的结构 jmp_buf 中，这个结构对于程序员来说一般是透明的，也就是说我们并不知道 jmp_buf 的具体字段及其含义，也就不能做诸如栈空间切换的操作 &mdash; 这对于实现&#8221;协程&#8221;系统来说，就比较麻烦了。因为&#8221;协程&#8221;间并发执行的性质要求系统对不同&#8221;协程&#8221;的栈空间进行隔离。</p>
+
+<p>尽管如此，我还是在网上找到了很多利用 setjmp / long_jmp 实现的&#8221;协程&#8221;系统，现挑其中几个比较有代表性的例子介绍一下。</p>
+
+<h1>案例一： setjmp-longjmp-ucontext-snippets</h1>
+
+<p>这是一个小型的 &ldquo;N:1&rdquo; 的协程系统，代码托管在<a href="https://github.com/danluu/setjmp-longjmp-ucontext-snippets">github</a>。利用 setjmp / long_jmp 实现协程，同时还提供了一个简单的 <a href="http://en.wikipedia.org/wiki/Channel_programming">Channel</a> 实现，以供协程间通信。</p>
+
+<h2>实现分析</h2>
+
+<p>我们把精力主要放在协程的实现方式上，看看它如何解决“栈切换”的问题。</p>
+
+<p>该库提供了以下几个协程操作的API：</p>
+
+<ul>
+<li><p><code>void coro_allocate (int num_cores)</code>
+  在程序开始时调用，静态预分配 num_cores 个协程空间，程序中最大运行的协程数不能超过 num_cores 个。</p></li>
+<li><p><code>int coro_spawn(coro_callback f, void *user_state)</code>
+  启动一个协程，入口函数由第一个参数 f 指定， user_state 是 f 的参数。</p></li>
+<li><p><code>int coro_runnable(int pid)</code>
+  将编号为 pid 的协程设为可执行态。</p></li>
+<li><p><code>void coro_yield(int pid)</code>
+  让出处理器，并切换到以 pid 为编号的其他协程继续执行。</p></li>
+</ul>
+
+
+<p>下面来具体看看其中的奥秘，我们将重点集中在 coro_allocate 这个函数，它为每个协程分配一个 jmp_buf 结构和一个指示该协程状态的int型数据。其中0号协程对应于“调度器”或者说“运行时环境”。
+最后调用 <code>grow_stack(0, num_cores)</code> 完成后续工作，应该说所有的玄机都藏在<strong>grow_stack</strong>这个函数中，我们看一下它的代码：</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="c1">// have never exit so we get a pristine stack for our coroutines</span>
+</span><span class='line'><span class="k">static</span> <span class="kt">void</span> <span class="n">grow_stack</span><span class="p">(</span><span class="kt">int</span> <span class="n">n</span><span class="p">,</span> <span class="kt">int</span> <span class="n">num_coros</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>  <span class="k">if</span> <span class="p">(</span><span class="n">n</span> <span class="o">==</span> <span class="n">num_coros</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>    <span class="n">longjmp</span><span class="p">(</span><span class="n">bufs</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span><span class="mi">1</span><span class="p">);</span>
+</span><span class='line'>    <span class="n">assert</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+</span><span class='line'>    <span class="k">return</span><span class="p">;</span>
+</span><span class='line'>  <span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">setjmp</span><span class="p">(</span><span class="n">bufs</span><span class="p">[</span><span class="n">n</span><span class="p">]))</span> <span class="p">{</span>
+</span><span class='line'>    <span class="kt">char</span> <span class="o">*</span><span class="n">big_array</span><span class="p">;</span>
+</span><span class='line'>    <span class="n">big_array</span> <span class="o">=</span> <span class="n">alloca</span><span class="p">(</span><span class="n">STACK_SIZE</span><span class="p">);</span>
+</span><span class='line'>    <span class="k">asm</span> <span class="k">volatile</span><span class="p">(</span><span class="s">&quot;&quot;</span> <span class="o">::</span> <span class="s">&quot;m&quot;</span> <span class="p">(</span><span class="n">big_array</span><span class="p">));</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="n">grow_stack</span><span class="p">(</span><span class="n">n</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">num_coros</span><span class="p">);</span>
+</span><span class='line'>  <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+</span><span class='line'>    <span class="k">if</span> <span class="p">(</span><span class="n">n</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>      <span class="k">return</span><span class="p">;</span> <span class="c1">//came from coro_allocate; return back there</span>
+</span><span class='line'>    <span class="p">}</span>
+</span><span class='line'>    <span class="k">while</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>      <span class="n">assert</span><span class="p">(</span><span class="n">spawned_fun</span><span class="p">);</span>
+</span><span class='line'>      <span class="n">coro_callback</span> <span class="n">f</span> <span class="o">=</span> <span class="n">spawned_fun</span><span class="p">;</span>
+</span><span class='line'>      <span class="n">spawned_fun</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>      <span class="n">assert</span><span class="p">(</span><span class="n">n</span> <span class="o">==</span> <span class="n">coro_pid</span><span class="p">);</span>
+</span><span class='line'>      <span class="n">f</span><span class="p">(</span><span class="n">spawned_user_state</span><span class="p">);</span>
+</span><span class='line'>      <span class="n">used_pids</span><span class="p">[</span><span class="n">n</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span><span class='line'>      <span class="n">coro_yield</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+</span><span class='line'>    <span class="p">}</span>
+</span><span class='line'>  <span class="p">}</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>这是一个递归函数，深度是 num_cores + 1。调用顺序从 0 到 num_cores, 每一层调用都利用 setjmp 将状态保存到相应编号的 jmp_buf 结构中，然后通过alloca在当前栈帧上分配一个较大的空间，作为该编号协程的运行栈。当参数n超过num_coros时，程序逐层返回到调用者。</p>
+
+<p>之后调用 coro_spawn 启动一个协程时，先将参数 f 和 user_state 分别保存到全局变量 spawned_fun 和 spawned_user_state 中，然后找到一个空闲的协程编号，恢复该编号在 grow_stack 时保存的状态 —— 也就是说回到了 grow_stack 的 else 分支，调用全局的函数指针 spawned_fun 指向的入口函数 （<em>由于系统是运行在单线程环境的，因此使用全局变量不会出现问题，但笔者个人认为为每个协程设计一个结构体来保存这些信息更好一些</em>）。</p>
+
+<p>刚才介绍时我们特别强调了跳转到已经释放的“栈帧”可能引发错误，但这里却偏偏这样做，道理是什么呢？
+问题的关键就在于grow_stack时用alloca预留栈空间的操作，这个操作本质上将原来主程序的栈空间划分成N份，然后假设每个协程运行时使用的栈都不会超过为它们预留的那段空间。而编号为0 的协程恰好对应于运行时环境，因此运行时环境的栈就位于最低端，如果后面的操作使用的栈空间不“越界”，那就不会影响1号协程的执行；其他协程之间也是同理。</p>
+
+<h2>小结</h2>
+
+<p>案例一利用了程序栈帧顺序增长的特点，实现非常巧妙。<strong>但缺点在于不但需要提前指定系统支持的最大协程数，而且所有协程的栈都必须在原始程序栈空间的基础上分配，栈的大小及支持的最大协程数量（也就是可划分的最大栈数量）都因此受到了限制。</strong></p>
+
+<h1>案例二：libconcurrency</h1>
+
+<p>这个项目托管在<a href="https://code.google.com/p/libconcurrency/">google code</a>，也是采用 setjmp / long_jmp 实现的轻量协程系统，但与案例一的不同之处在于，libconcurrency 使用了“栈拷贝”技术 &mdash; 每个协程的运行栈是通过malloc在堆空间动态分配的，然后再将原始的栈帧数据复制到新的栈上。正因如此，其系统的可扩展性比较好，协程可以动态创建，且理论上没有上限。</p>
+
+<h2>实现分析</h2>
+
+<p>还是照例先来分析一下协程操作的API，我们最关心以下几个：</p>
+
+<ul>
+<li><p><code>coro coro_init()</code>
+  用来在系统启动时对协程环境进行初始化，这里隐藏着系统最关键的部分，稍后详细分析。</p></li>
+<li><p><code>coro coro_new(_entry fn)</code>
+  新分配一个协程并指定其入口函数 fn，这个函数非常重要，我们将首先分析。</p></li>
+<li><p><code>cvalue coro_call(coro target, cvalue value)</code>
+  启动协程 target，并传入指定参数 value，同时返回协程执行后的结果。</p></li>
+</ul>
+
+
+<p>先分析 coro_new 的实现。
+该函数本身不难理解：先用malloc分配 struct _coro 对象 <code>c</code> 及其栈空间，然后初始化该对象，指定入口函数、栈指针和栈大小，最后调用 <code>_coro_enter (c)</code> 完成后续操作 —— _coro_enter函数才是我们重点分析的对象，其代码如下：</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="cm">/*</span>
+</span><span class='line'><span class="cm"> * This function invokes the start function of the coroutine when the</span>
+</span><span class='line'><span class="cm"> * coroutine is first called. If it was called from coro_new, then it sets</span>
+</span><span class='line'><span class="cm"> * up the stack and initializes the saved context.</span>
+</span><span class='line'><span class="cm"> */</span>
+</span><span class='line'><span class="kt">void</span> <span class="n">_coro_enter</span><span class="p">(</span><span class="n">coro</span> <span class="n">c</span><span class="p">)</span>
+</span><span class='line'><span class="p">{</span>
+</span><span class='line'>  <span class="k">if</span> <span class="p">(</span><span class="n">_save_and_resumed</span><span class="p">(</span><span class="n">c</span><span class="o">-&gt;</span><span class="n">ctxt</span><span class="p">))</span>
+</span><span class='line'>  <span class="p">{</span>    <span class="cm">/* start the coroutine; stack is empty at this point. */</span>
+</span><span class='line'>      <span class="n">cvalue</span> <span class="n">_return</span><span class="p">;</span>
+</span><span class='line'>      <span class="n">_return</span><span class="p">.</span><span class="n">p</span> <span class="o">=</span> <span class="n">_cur</span><span class="p">;</span>
+</span><span class='line'>      <span class="n">_cur</span><span class="o">-&gt;</span><span class="n">start</span><span class="p">(</span><span class="n">_value</span><span class="p">);</span>
+</span><span class='line'>      <span class="cm">/* return the exited coroutine to the exit handler */</span>
+</span><span class='line'>      <span class="n">coro_call</span><span class="p">(</span><span class="o">&amp;</span><span class="n">_on_exit</span><span class="p">,</span> <span class="n">_return</span><span class="p">);</span>
+</span><span class='line'>  <span class="p">}</span>
+</span><span class='line'>  <span class="cm">/* this code executes when _coro_enter is called from coro_new */</span>
+</span><span class='line'><span class="nl">INIT_CTXT:</span>
+</span><span class='line'>  <span class="p">{</span>
+</span><span class='line'>      <span class="cm">/* local and new stack pointers at identical relative positions on the stack */</span>
+</span><span class='line'>      <span class="n">intptr_t</span> <span class="n">local_sp</span> <span class="o">=</span> <span class="p">(</span><span class="n">intptr_t</span><span class="p">)</span><span class="o">&amp;</span><span class="n">local_sp</span><span class="p">;</span>
+</span><span class='line'>      <span class="cm">/* I don&#39;t know what the addition &quot;- sizeof(void *)&quot; is for when</span>
+</span><span class='line'><span class="cm">        the stack grows downards */</span>
+</span><span class='line'>      <span class="n">intptr_t</span> <span class="n">new_sp</span> <span class="o">=</span> <span class="n">c</span><span class="o">-&gt;</span><span class="n">stack_base</span> <span class="o">+</span>
+</span><span class='line'>          <span class="p">(</span><span class="n">_stack_grows_up</span>
+</span><span class='line'>              <span class="o">?</span> <span class="n">_frame_offset</span>
+</span><span class='line'>              <span class="o">:</span> <span class="n">c</span><span class="o">-&gt;</span><span class="n">stack_size</span> <span class="o">-</span> <span class="n">_frame_offset</span> <span class="o">-</span> <span class="k">sizeof</span><span class="p">(</span><span class="kt">void</span> <span class="o">*</span><span class="p">));</span>
+</span><span class='line'>
+</span><span class='line'>      <span class="cm">/* copy local stack frame to the new stack */</span>
+</span><span class='line'>      <span class="n">_coro_cpframe</span><span class="p">(</span><span class="n">local_sp</span><span class="p">,</span> <span class="n">new_sp</span><span class="p">);</span>
+</span><span class='line'>
+</span><span class='line'>      <span class="cm">/* reset any locals in the saved state to point to the new stack */</span>
+</span><span class='line'>      <span class="n">_coro_rebase</span><span class="p">(</span><span class="n">c</span><span class="p">,</span> <span class="n">local_sp</span><span class="p">,</span> <span class="n">new_sp</span><span class="p">);</span>
+</span><span class='line'>  <span class="p">}</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p><em>说明一下，代码中的_save_and_resume是一个宏，直接对应于 setjmp。</em></p>
+
+<p>不难理解，其中的 if 分支是后续经由 long_jmp 恢复后的执行路径，该分支就是调用之前指定的入口函数，调用结束后马上切换回主协程处理返回值。</p>
+
+<p>我们重点来看 <strong>INIT_CTXT</strong> 标号后的语句块，这部分用来做协程执行状态的初始化，比较难理解，该过程大体分3步：</p>
+
+<ol>
+<li><p>利用栈变量 local_sp 的地址值来确定当前栈帧的位置，然后通过之前 malloc 的指针及大小确定 new_sp 的值，计算时需要注意不同的体系结构下，栈的生长方向可能不同，需要区别对待。</p></li>
+<li><p>调用 _coro_cpframe 函数将当前栈帧内容复制到新的栈空间上，它本质上就是一个 memcpy，不过和前面一样，需要注意栈的方向。另外，当前栈使用大小，也就是需要复制的栈长度由全局变量 _frame_offset 指定，该变量在 coro_init 时确定，后面再介绍。</p></li>
+<li><p>最后，根据新旧SP值，调用 _coro_rebase 函数对之前保存在 jmp_buf 中的状态信息进行修正，使得下次跳回时能落到新的栈帧上执行。
+深入到 _coro_rebase 实现中，会发现这个函数首先计算新旧SP的差值，然后将这个差值加回到 jmp_buf （被看作是一个intptr_t类型的数组）的部分元素上，视为修正——具体哪个位置的值需要被修正保存在全局的数组 _offset[] 中，它的值同样是在 coro_init 函数执行阶段被确定的。</p></li>
+</ol>
+
+
+<p><strong>先来解释一下这种“线性修正”之所以可行的原因：</strong></p>
+
+<p>一般情况下，我们可以认为 jmp_buf 是一个数组，数组元素的位宽与具体硬件平台相关，比如IA32下是32bit （int），X64下是64bit （long long）。
+其中保存的主要信息就是运行 setjmp 点的 PC、SP（栈指针）以及BP（栈底位置）等。
+这些信息大致上可以分成两部分：一类与当前的运行栈地址相关，比如SP、BP；另一类与之无关，比如PC。
+基于C语言栈“线性生长”的特点，通过弥补新旧栈地址的线性差值，就可以达到切换栈的效果。</p>
+
+<p>然而，具体实现中 jmp_buf 的每个元素位置对应什么信息则是平台相关的，作为一个以可移植性为目的的系统不应该对其实现做任何假设，因此只能在程序启动阶段以某种方式动态计算获取。</p>
+
+<p>这个计算的过程就隐藏在 coro_init 中，具体通过 _probe_arch 函数实现，相关代码如下：</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="cm">/* This probing code is derived from Douglas Jones&#39; user thread library */</span>
+</span><span class='line'><span class="k">struct</span> <span class="n">_probe_data</span> <span class="p">{</span>
+</span><span class='line'>  <span class="n">intptr_t</span> <span class="n">low_bound</span><span class="p">;</span>        <span class="cm">/* below probe on stack */</span>
+</span><span class='line'>  <span class="n">intptr_t</span> <span class="n">probe_local</span><span class="p">;</span>  <span class="cm">/* local to probe on stack */</span>
+</span><span class='line'>  <span class="n">intptr_t</span> <span class="n">high_bound</span><span class="p">;</span>   <span class="cm">/* above probe on stack */</span>
+</span><span class='line'>  <span class="n">intptr_t</span> <span class="n">prior_local</span><span class="p">;</span>  <span class="cm">/* value of probe_local from earlier call */</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="n">jmp_buf</span> <span class="n">probe_env</span><span class="p">;</span> <span class="cm">/* saved environment of probe */</span>
+</span><span class='line'>  <span class="n">jmp_buf</span> <span class="n">probe_sameAR</span><span class="p">;</span>  <span class="cm">/* second environment saved by same call */</span>
+</span><span class='line'>  <span class="n">jmp_buf</span> <span class="n">probe_samePC</span><span class="p">;</span>  <span class="cm">/* environment saved on previous call */</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="n">jmp_buf</span> <span class="o">*</span> <span class="n">ref_probe</span><span class="p">;</span>    <span class="cm">/* switches between probes */</span>
+</span><span class='line'><span class="p">};</span>
+</span><span class='line'>
+</span><span class='line'><span class="kt">void</span> <span class="n">boundhigh</span><span class="p">(</span><span class="k">struct</span> <span class="n">_probe_data</span> <span class="o">*</span><span class="n">p</span><span class="p">)</span>
+</span><span class='line'><span class="p">{</span>
+</span><span class='line'>  <span class="kt">int</span> <span class="n">c</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">p</span><span class="o">-&gt;</span><span class="n">high_bound</span> <span class="o">=</span> <span class="p">(</span><span class="n">intptr_t</span><span class="p">)</span><span class="o">&amp;</span><span class="n">c</span><span class="p">;</span>
+</span><span class='line'><span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="kt">void</span> <span class="n">probe</span><span class="p">(</span><span class="k">struct</span> <span class="n">_probe_data</span> <span class="o">*</span><span class="n">p</span><span class="p">)</span>
+</span><span class='line'><span class="p">{</span>
+</span><span class='line'>  <span class="kt">int</span> <span class="n">c</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">p</span><span class="o">-&gt;</span><span class="n">prior_local</span> <span class="o">=</span> <span class="n">p</span><span class="o">-&gt;</span><span class="n">probe_local</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">p</span><span class="o">-&gt;</span><span class="n">probe_local</span> <span class="o">=</span> <span class="p">(</span><span class="n">intptr_t</span><span class="p">)</span><span class="o">&amp;</span><span class="n">c</span><span class="p">;</span>
+</span><span class='line'><span class="nl">__LABEL_0:</span>
+</span><span class='line'>  <span class="n">_setjmp</span><span class="p">(</span> <span class="o">*</span><span class="p">(</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">ref_probe</span><span class="p">)</span> <span class="p">);</span>
+</span><span class='line'>  <span class="n">p</span><span class="o">-&gt;</span><span class="n">ref_probe</span> <span class="o">=</span> <span class="o">&amp;</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">probe_env</span><span class="p">;</span>
+</span><span class='line'><span class="nl">__LABEL_1:</span>
+</span><span class='line'>    <span class="n">_setjmp</span><span class="p">(</span> <span class="n">p</span><span class="o">-&gt;</span><span class="n">probe_sameAR</span> <span class="p">);</span>
+</span><span class='line'>  <span class="n">boundhigh</span><span class="p">(</span><span class="n">p</span><span class="p">);</span>
+</span><span class='line'><span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="kt">void</span> <span class="n">boundlow</span><span class="p">(</span><span class="k">struct</span> <span class="n">_probe_data</span> <span class="o">*</span><span class="n">p</span><span class="p">)</span>
+</span><span class='line'><span class="p">{</span>
+</span><span class='line'>  <span class="kt">int</span> <span class="n">c</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">p</span><span class="o">-&gt;</span><span class="n">low_bound</span> <span class="o">=</span> <span class="p">(</span><span class="n">intptr_t</span><span class="p">)</span><span class="o">&amp;</span><span class="n">c</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">probe</span><span class="p">(</span><span class="n">p</span><span class="p">);</span>
+</span><span class='line'><span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="kt">void</span> <span class="n">fill</span><span class="p">(</span><span class="k">struct</span> <span class="n">_probe_data</span> <span class="o">*</span><span class="n">p</span><span class="p">)</span>
+</span><span class='line'><span class="p">{</span>
+</span><span class='line'>  <span class="n">boundlow</span><span class="p">(</span><span class="n">p</span><span class="p">);</span>
+</span><span class='line'><span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">static</span> <span class="kt">void</span> <span class="n">_infer_jmpbuf_offsets</span><span class="p">(</span><span class="k">struct</span> <span class="n">_probe_data</span> <span class="o">*</span><span class="n">pb</span><span class="p">)</span>
+</span><span class='line'><span class="p">{</span>
+</span><span class='line'>  <span class="cm">/* following line views jump buffer as array of long intptr_t */</span>
+</span><span class='line'>  <span class="kt">unsigned</span> <span class="n">i</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">intptr_t</span> <span class="o">*</span> <span class="n">p</span> <span class="o">=</span> <span class="p">(</span><span class="n">intptr_t</span> <span class="o">*</span><span class="p">)</span><span class="n">pb</span><span class="o">-&gt;</span><span class="n">probe_env</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">intptr_t</span> <span class="o">*</span> <span class="n">sameAR</span> <span class="o">=</span> <span class="p">(</span><span class="n">intptr_t</span> <span class="o">*</span><span class="p">)</span><span class="n">pb</span><span class="o">-&gt;</span><span class="n">probe_sameAR</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">intptr_t</span> <span class="o">*</span> <span class="n">samePC</span> <span class="o">=</span> <span class="p">(</span><span class="n">intptr_t</span> <span class="o">*</span><span class="p">)</span><span class="n">pb</span><span class="o">-&gt;</span><span class="n">probe_samePC</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">intptr_t</span> <span class="n">prior_diff</span> <span class="o">=</span> <span class="n">pb</span><span class="o">-&gt;</span><span class="n">probe_local</span> <span class="o">-</span> <span class="n">pb</span><span class="o">-&gt;</span><span class="n">prior_local</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">intptr_t</span> <span class="n">min_frame</span> <span class="o">=</span> <span class="n">pb</span><span class="o">-&gt;</span><span class="n">probe_local</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="k">for</span> <span class="p">(</span><span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">jmp_buf</span><span class="p">)</span> <span class="o">/</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">intptr_t</span><span class="p">);</span> <span class="o">++</span><span class="n">i</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>      <span class="n">intptr_t</span> <span class="n">pi</span> <span class="o">=</span> <span class="n">p</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">samePCi</span> <span class="o">=</span> <span class="n">samePC</span><span class="p">[</span><span class="n">i</span><span class="p">];</span>
+</span><span class='line'>      <span class="k">if</span> <span class="p">(</span><span class="n">pi</span> <span class="o">!=</span> <span class="n">samePCi</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>          <span class="k">if</span> <span class="p">(</span><span class="n">pi</span> <span class="o">!=</span> <span class="n">sameAR</span><span class="p">[</span><span class="n">i</span><span class="p">])</span> <span class="p">{</span>
+</span><span class='line'>              <span class="n">perror</span><span class="p">(</span><span class="s">&quot;No Thread Launch</span><span class="se">\n</span><span class="s">&quot;</span> <span class="p">);</span>
+</span><span class='line'>              <span class="n">exit</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">);</span>
+</span><span class='line'>          <span class="p">}</span>
+</span><span class='line'>          <span class="k">if</span> <span class="p">((</span><span class="n">pi</span> <span class="o">-</span> <span class="n">samePCi</span><span class="p">)</span> <span class="o">==</span> <span class="n">prior_diff</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>              <span class="cm">/* the i&#39;th pointer field in jmp_buf needs to be save/restored */</span>
+</span><span class='line'>              <span class="n">_offsets</span><span class="p">[</span><span class="n">_offsets_len</span><span class="o">++</span><span class="p">]</span> <span class="o">=</span> <span class="n">i</span><span class="p">;</span>
+</span><span class='line'>              <span class="k">if</span> <span class="p">((</span><span class="n">_stack_grows_up</span> <span class="o">&amp;&amp;</span> <span class="n">min_frame</span> <span class="o">&gt;</span> <span class="n">pi</span><span class="p">)</span> <span class="o">||</span> <span class="p">(</span><span class="o">!</span><span class="n">_stack_grows_up</span> <span class="o">&amp;&amp;</span> <span class="n">min_frame</span> <span class="o">&lt;</span> <span class="n">pi</span><span class="p">))</span> <span class="p">{</span>
+</span><span class='line'>                  <span class="n">min_frame</span> <span class="o">=</span> <span class="n">pi</span><span class="p">;</span>
+</span><span class='line'>              <span class="p">}</span>
+</span><span class='line'>          <span class="p">}</span>
+</span><span class='line'>      <span class="p">}</span>
+</span><span class='line'>  <span class="p">}</span>
+</span><span class='line'>  
+</span><span class='line'>  <span class="n">_frame_offset</span> <span class="o">=</span> <span class="p">(</span><span class="n">_stack_grows_up</span>
+</span><span class='line'>      <span class="o">?</span> <span class="n">pb</span><span class="o">-&gt;</span><span class="n">probe_local</span> <span class="o">-</span> <span class="n">min_frame</span>
+</span><span class='line'>      <span class="o">:</span> <span class="n">min_frame</span> <span class="o">-</span> <span class="n">pb</span><span class="o">-&gt;</span><span class="n">probe_local</span><span class="p">);</span>
+</span><span class='line'><span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">static</span> <span class="kt">void</span> <span class="n">_infer_direction_from</span><span class="p">(</span><span class="kt">int</span> <span class="o">*</span><span class="n">first_addr</span><span class="p">)</span>
+</span><span class='line'><span class="p">{</span>
+</span><span class='line'>  <span class="kt">int</span> <span class="n">second</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">_stack_grows_up</span> <span class="o">=</span> <span class="p">(</span><span class="n">first_addr</span> <span class="o">&lt;</span> <span class="o">&amp;</span><span class="n">second</span><span class="p">);</span>
+</span><span class='line'><span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">static</span> <span class="kt">void</span> <span class="n">_infer_stack_direction</span><span class="p">()</span>
+</span><span class='line'><span class="p">{</span>
+</span><span class='line'>  <span class="kt">int</span> <span class="n">first</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">_infer_direction_from</span><span class="p">(</span><span class="o">&amp;</span><span class="n">first</span><span class="p">);</span>
+</span><span class='line'><span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">static</span> <span class="kt">void</span> <span class="n">_probe_arch</span><span class="p">()</span>
+</span><span class='line'><span class="p">{</span>
+</span><span class='line'>  <span class="k">struct</span> <span class="n">_probe_data</span> <span class="n">p</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">p</span><span class="p">.</span><span class="n">ref_probe</span> <span class="o">=</span> <span class="o">&amp;</span><span class="n">p</span><span class="p">.</span><span class="n">probe_samePC</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="n">_infer_stack_direction</span><span class="p">();</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="cm">/* do a probe with filler on stack */</span>
+</span><span class='line'>  <span class="n">fill</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>
+</span><span class='line'>  <span class="cm">/* do a probe without filler */</span>
+</span><span class='line'>  <span class="n">boundlow</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>
+</span><span class='line'>  <span class="n">_infer_jmpbuf_offsets</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<ul>
+<li><p>首先需要分析栈的生长方向，这个实现很简单，只要比较调用者和被调用者栈变量的地址大小就可以了；</p></li>
+<li><p>下一步通过调用<code>fill(&amp;p) -&gt; boundlow(p) -&gt; probe(p)</code>，将<strong>__LABLE_0</strong>的状态记录到 _probe_data 的 <strong>probe_samePC</strong>字段，而将<strong>__LABEL_1</strong>的状态记录到<strong>probe_sameAR</strong>字段；<strong>probe_local</strong>字段则记录执行 probe 函数时的栈顶 —— SP值。</p></li>
+<li><p>然后，通过调用<code>boundlow(&amp;p) -&gt; probe(p)</code>，将<strong>__LABLE_0</strong>的状态记录到 _probe_data 的<strong>probe_env</strong>字段，而<strong>__LABEL_1</strong>的状态仍旧记录到<strong>probe_sameAR</strong>字段；将上一次记录的执行 probe 函数时记录的SP值保存到<strong>prior_local</strong>字段，同时更新<strong>probe_local</strong>字段记录本次执行probe函数的SP值。</p></li>
+<li><p>最后，调用 _infer_jmpbuf_offsets 函数进行最终计算。
+这时，<strong>probe_samePC</strong>保存了第一次<strong>__LABEL_0</strong>处的状态，<strong>probe_env</strong>保存了第二次<strong>__LABEL_0</strong>处的状态，二者的PC属性相同，栈属性存在线性偏差（由于前次多了一层调用）；而 <strong>probe_env</strong>与<strong>probe_sameAR</strong>的栈属性相同，PC属性不同（调用setjmp的位置不同）。
+通过这三组 jmp_buf 数据的关系，以及之前记录的两次调用过程的SP值之间的偏差，就能求得 jmp_buf 各项的属性是栈相关的还是栈无关的，将所有栈相关量在 jmp_buf 中的索引位置记录在 _offset 数组中即可。</p></li>
+<li><p>同时，在遍历 jmp_buf 量的时候，还要找到其中与SP相差最大的值记录到 min_frame 变量中，这可能就是BP的值，用SP和BP相减，就得到了当前调用栈帧的大小，这个值最终被保存在全局变量 _frame_offset中，作为后来进行“栈拷贝”时的重要参数。</p></li>
+</ul>
+
+
+<p><img class="center" src="/images/2014/sjlj01.jpeg"></p>
+
+<h2>小结</h2>
+
+<p>本例利用了 setjmp 操作的底层实现原理，特别是 jmp_buf 结构的实现方式，设计了一个“可移植”的方案。
+这个方案虽然可行，但是仍在一定程度上对 setjmp / long_jmp 的实现做了一些假设。
+项目开发者并没有给出业已经过测试、可正确运行的平台；
+笔者也没有在X86之外的系统上做过实验，因此对这种实现的普适性无法给出保证。
+但总的来说，案例二的实现的技巧还是颇值得玩味的。</p>
+
+<p>同样，libconcurrency库也仅支持 &ldquo;N:1&rdquo; 的映射方式，底层实现中没有用到多线程 —— 尽管从代码实现来看，似乎作者希望提供某种“线程安全”支持，但究竟是否如此，作者也没有提供任何用例及说明。</p>
+
+<h1>案例三：Cilkplus 协程实现</h1>
+
+<p>综合上面两个案例，我们不难发现，利用 setjmp / long_jmp 机制实现协程系统虽然在理论上具有可移植性好、性能好的优点，但用于实践中，由于 setjmp / long_jmp 实现的不透明性，导致很难构建出一个符合产品级需求的协程框架 &mdash; 即使上面介绍的那些具有一定想象力的实现，也几乎难以直接应用于实际产品。</p>
+
+<p>产生上述问题的原因，主要在于不同体系结构的实现存在很大差异。
+那么能否退而求其次，放弃“可移植性”这个优势，集中于几种常见的架构，专注于性能方面的提高呢？
+答案是肯定的 &mdash; 接下来介绍的 Cilkplus 语言 Runtime 库，就是 Intel 基于自家 X86 / X86_64 平台的特点，实现的一个高效的“协程”框架。</p>
+
+<h2>定制的 setjmp / long_jmp</h2>
+
+<p>Cilkplus 运行时环境所使用的 setjmp / long_jmp 并非 C 库中提供的版本，而是编译器内嵌版本_builtin_setjmp / _builtin_longjmp，对应的 jmp_buf 结构对于开发者 —— 至少是系统开发者是可见的 —— 它本身是一个 void* 型数组，其中存放着运行状态的PC、SP及BP值，而且明确知道每个值在数组中的位置 —— 这样就可以在 setjmp 后，直接对保存的状态值进行“修正”。</p>
+
+<h2>实现&#8221;协程&#8221;栈切换的原理</h2>
+
+<p>前面介绍了为每个“协程”分配独立运行栈对于一个“协程”运行时系统的重要性，也了解了 setjmp / long_jmp 机制下实现栈分配，特别是高可用性的栈分配机制存在一定困难。现在来看看 Cilkplus 如何解决这个问题。</p>
+
+<p>由于 Cilkplus 仅针对 Intel X86 / X64 平台，因此在介绍其“协程”栈切换原理之前，有必要先回顾一下 X86 / X64 平台的调用栈规则。以32位的 X86 为例介绍：</p>
+
+<ul>
+<li>调用者规则：
+  调用者（Caller）首先需要将参数按照从右到左的顺序依次压栈，然后调用相应的函数，返回后再将参数栈释放。如下代码所示：</li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="n">push</span> <span class="p">[</span><span class="n">var</span><span class="p">]</span> <span class="p">;</span> <span class="n">Push</span> <span class="n">last</span> <span class="n">parameter</span> <span class="n">first</span>
+</span><span class='line'><span class="n">push</span> <span class="mi">216</span>   <span class="p">;</span> <span class="n">Push</span> <span class="n">the</span> <span class="n">second</span> <span class="n">parameter</span>
+</span><span class='line'><span class="n">push</span> <span class="n">eax</span>   <span class="p">;</span> <span class="n">Push</span> <span class="n">first</span> <span class="n">parameter</span> <span class="n">last</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">call</span> <span class="n">_myFunc</span> <span class="p">;</span> <span class="n">Call</span> <span class="n">the</span> <span class="n">function</span> <span class="p">(</span><span class="n">assume</span> <span class="n">C</span> <span class="n">naming</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">add</span> <span class="n">esp</span><span class="p">,</span> <span class="mi">12</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<ul>
+<li>被调用者规则：
+  被调用者（Callee）首先将当前BP（也就是Caller的BP）压栈，然后将当前SP（Caller的SP） 赋值给BP。之后如果遇到分配新的栈变量、创建调用参数或者用 alloca 动态分配空间时，则将 SP 减去新分配空间大小，并用“BP +/&ndash; 偏移量”的方式访问这些局部变量。<strong>访问当前栈帧的局部变量只需要BP即可，这点非常重要！</strong></li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'>   <span class="n">push</span> <span class="n">ebp</span>
+</span><span class='line'>   <span class="n">mov</span>  <span class="n">ebp</span><span class="p">,</span> <span class="n">esp</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<ul>
+<li>栈帧结构图如下所示：</li>
+</ul>
+
+
+<p><img class="center" src="/images/2014/stack-convention.png"></p>
+
+<p>了解了这些基本知识后，就可以分析 Cilkplus 的代码了，其中最关键的部分如下所示：</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="n">NORETURN</span> <span class="n">cilk_fiber_sysdep</span><span class="o">::</span><span class="n">run</span><span class="p">()</span>
+</span><span class='line'><span class="p">{</span>
+</span><span class='line'>    <span class="c1">// Only fibers created from a pool have a proc method to run and execute. </span>
+</span><span class='line'>    <span class="n">CILK_ASSERT</span><span class="p">(</span><span class="n">m_start_proc</span><span class="p">);</span>
+</span><span class='line'>    <span class="n">CILK_ASSERT</span><span class="p">(</span><span class="o">!</span><span class="k">this</span><span class="o">-&gt;</span><span class="n">is_allocated_from_thread</span><span class="p">());</span>
+</span><span class='line'>    <span class="n">CILK_ASSERT</span><span class="p">(</span><span class="o">!</span><span class="k">this</span><span class="o">-&gt;</span><span class="n">is_resumable</span><span class="p">());</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="c1">// TBD: This setjmp/longjmp pair simply changes the stack pointer.</span>
+</span><span class='line'>    <span class="c1">// We could probably replace this code with some assembly.</span>
+</span><span class='line'>    <span class="k">if</span> <span class="p">(</span><span class="o">!</span> <span class="n">CILK_SETJMP</span><span class="p">(</span><span class="n">m_resume_jmpbuf</span><span class="p">))</span>
+</span><span class='line'>    <span class="p">{</span>
+</span><span class='line'>        <span class="c1">// Change stack pointer to fiber stack</span>
+</span><span class='line'>        <span class="n">JMPBUF_SP</span><span class="p">(</span><span class="n">m_resume_jmpbuf</span><span class="p">)</span> <span class="o">=</span> <span class="n">m_stack_base</span><span class="p">;</span>
+</span><span class='line'>        <span class="n">CILK_LONGJMP</span><span class="p">(</span><span class="n">m_resume_jmpbuf</span><span class="p">);</span>
+</span><span class='line'>    <span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="c1">// Verify that 1) &#39;this&#39; is still valid and 2) &#39;*this&#39; has not been</span>
+</span><span class='line'>    <span class="c1">// corrupted.</span>
+</span><span class='line'>    <span class="n">CILK_ASSERT</span><span class="p">(</span><span class="n">magic_number</span> <span class="o">==</span> <span class="n">m_magic</span><span class="p">);</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="c1">// If the fiber that switched to me wants to be deallocated, do it now.</span>
+</span><span class='line'>    <span class="n">do_post_switch_actions</span><span class="p">();</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="c1">// Now call the user proc on the new stack</span>
+</span><span class='line'>    <span class="n">m_start_proc</span><span class="p">(</span><span class="k">this</span><span class="p">);</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="c1">// alloca() to force generation of frame pointer.  The argument to alloca</span>
+</span><span class='line'>    <span class="c1">// is contrived to prevent the compiler from optimizing it away.  This</span>
+</span><span class='line'>    <span class="c1">// code should never actually be executed.</span>
+</span><span class='line'>    <span class="kt">int</span><span class="o">*</span> <span class="n">dummy</span> <span class="o">=</span> <span class="p">(</span><span class="kt">int</span><span class="o">*</span><span class="p">)</span> <span class="n">alloca</span><span class="p">(</span><span class="k">sizeof</span><span class="p">(</span><span class="kt">int</span><span class="p">)</span> <span class="o">+</span> <span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">size_t</span><span class="p">)</span> <span class="n">m_start_proc</span> <span class="o">&amp;</span> <span class="mh">0x1</span><span class="p">);</span>
+</span><span class='line'>    <span class="o">*</span><span class="n">dummy</span> <span class="o">=</span> <span class="mh">0xface</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="c1">// User proc should never return.</span>
+</span><span class='line'>    <span class="n">__cilkrts_bug</span><span class="p">(</span><span class="s">&quot;Should not get here&quot;</span><span class="p">);</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>上面是启动一个新“协程”的过程，在该调用之前，新的栈空间已经通过malloc分配好了，指针保存在变量m_stack_base中。下面的任务就是如何将运行栈切换到这个新的空间。</p>
+
+<ul>
+<li><p>首先来看 if 分支，也就是直接从 CILK_SETJMP 返回的情形：通过 JMPBUF_SP 这个宏，可以访问到刚刚保存的SP值，将其修改并指向新的地址 —— 注意这里只对SP进行了修改，没有修改BP值，也没有进行&#8221;栈拷贝&#8221;。</p></li>
+<li><p>然后，通过 CILK_LONGJMP 跳转到修改后的状态 —— 执行线索切换到 if 分支后的代码 —— 注意，这时候 SP 已经切换成新值了，而 BP 还是原来的值 —— 根据之前的介绍，当前栈上的局部变量，包括函数的调用参数都通过“BP +/&ndash; 偏移量”进行访问，因此新的协程依然能访问到原来的栈变量、参数（<strong>注意：虽然run()方法本身没有参数，但由于是C++类方法，所以隐含了参数 this 指针，同时该对象的所有成员变量也依赖this指针才能访问到</strong>）。</p></li>
+<li><p>新协程继续执行，调用 m_start_proc(this) 进入新的入口函数 —— 这时由于使用新的 SP，调用参数及新函数的执行栈就都在新的栈空间上分配了，也就完成了“栈切换”。</p></li>
+</ul>
+
+
+<h2>Fast Clone / Slow Clone</h2>
+
+<p>如果说上面介绍的是 Cilkplus Runtime 协程机制的“普通”玩法，那么所谓的 “Fast Clone” / “Slow Clone” 就堪称 Cilkplus 协程机制的“文艺”玩法了。
+该机制与Cilkplus的“Work Stealing”调度器一起，作为系统实现的精华，被各种介绍Cilkplus的文章反复提及，可以说是这门新语言的核心技术创新之一。</p>
+
+<p>要分析  “Fast Clone” / “Slow Clone”，首先要了解一下 Cilkplus 的并行开发模型。
+在Cilkplus中，主要提供了 <strong>cilk_spawn</strong> 和 <strong>cilk_sync</strong> 这两个关键字来处理并行任务的创建、同步执行线索的功能。</p>
+
+<p><strong>cilk_spawn</strong> 关键字的语法主要有两种形式：</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="kt">int</span> <span class="n">a</span> <span class="o">=</span> <span class="n">cilk_spawn</span> <span class="n">foo</span><span class="p">(</span><span class="mi">123</span><span class="p">);</span> <span class="c1">// 变量a记录foo(123)的返回值</span>
+</span><span class='line'><span class="n">cilk_spawn</span> <span class="n">bar</span><span class="p">();</span> <span class="c1">// bar() 没有返回值或忽略其返回值</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p><strong>cilk_spawn</strong> 关键字后面的函数调用会以单独的线索（“协程”）与原先的主线程并行执行，主线程需要在后面必要的位置插入 <strong>cilk_sync</strong> 语句进行显式同步操作：
+比如上面例子中，主线程需要访问变量 a 的值时。
+如果程序员没有显式提供<strong>cilk_sync</strong> 语句，编译器会在适当的位置插入同步语句。</p>
+
+<p>对于一个程序，在多个线程上并行执行不同的部分是否能带来真正的性能提升，需要综合考量并行任务的粒度及其创建、同步等操作引入的额外开销，同时也要考量当前系统的负载情况 —— 这需要在运行过程中动态的判断。
+如果一味将所有 spawn 的任务都分配新的线程执行，可能带来较大的开销而得不偿失。
+为此，Cilkplus提出了一种动态优化的方案，即所谓的 “Fast Clone” / “Slow Clone”。</p>
+
+<p>该方案的核心思想是，在 Spawn 一个新的执行线索后，并不马上为其创建新的执行线程，而是仅仅创建一个任务的执行状态（也就是“协程”）；
+系统后台有若干个执行线程，会根据负载情况获取任务并执行。</p>
+
+<p>具体来说，Cilkplus采用了一种“Work First”的执行策略，在Spawn时刻，首先将当前状态（通过setjmp机制）保存起来，然后当前线程直接去执行Spawn的任务，而原先“主线程”的执行状态就挂到当前工作线程的任务队列中：</p>
+
+<ul>
+<li><p>若此时有其他空闲的工作线程，则“窃取”挂起的“主线程”任务，（<em>通过long_jmp机制</em>）恢复其执行，这样就实现了真正的并行 —— 这就是所谓的“Slow Clone”（“慢版本”）；并行的任务通过“同步”操作合并，类似传统的“fork-join”模型，新任务（即原来的“主线程”）也就在同步点被释放了。</p></li>
+<li><p>相反，如果挂起的任务没有被其他工作线程“窃取”，则当前线程执行完 Spawn 的任务后，会恢复之前挂起的任务，直接返回了“主线程”继续后续操作。
+由于 Spawn 任务本身就是在原来执行线程上运行的，因此可以跳过同步操作，看起来好像与不使用 <strong>cilk_spawn</strong> 关键字时的效果一样，是一个串行的版本。这就是所谓的 “Fast Clone”（即“快版本”）。</p></li>
+</ul>
+
+
+<p>下面我们通过一个小例子来具体看一下 Cilkplus 编译器所作的“翻译”工作。</p>
+
+<p>以下是原始的 cilkplus 程序：</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="kt">int</span> <span class="n">fib</span><span class="p">(</span><span class="kt">int</span> <span class="n">n</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>  <span class="k">if</span> <span class="p">(</span><span class="n">n</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">)</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">n</span><span class="p">;</span>
+</span><span class='line'>  <span class="kt">int</span> <span class="n">a</span> <span class="o">=</span> <span class="n">cilk_spawn</span> <span class="n">fib</span><span class="p">(</span><span class="n">n</span><span class="o">-</span><span class="mi">1</span><span class="p">);</span>
+</span><span class='line'>  <span class="kt">int</span> <span class="n">b</span> <span class="o">=</span> <span class="n">fib</span><span class="p">(</span><span class="n">n</span><span class="o">-</span><span class="mi">2</span><span class="p">);</span>
+</span><span class='line'>  <span class="n">cilk_sync</span><span class="p">;</span>
+</span><span class='line'>  <span class="k">return</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span><span class="p">;</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>下面是经编译器处理生成的程序，为了方便起见，这里用了伪代码表示：</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="k">struct</span> <span class="n">struct_anon</span> <span class="p">{</span>
+</span><span class='line'>    <span class="kt">int</span> <span class="n">n</span><span class="p">;</span>
+</span><span class='line'><span class="p">};</span>
+</span><span class='line'><span class="k">static</span> <span class="kt">void</span> <span class="n">__cilk_spawn_helper_fib</span><span class="p">(</span><span class="n">struct_anon</span> <span class="o">*</span><span class="n">agg</span><span class="p">,</span> <span class="kt">int</span> <span class="o">*</span><span class="n">ret</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>  <span class="p">...</span> <span class="p">...</span>
+</span><span class='line'>    <span class="n">__cilk_helper_prologue</span><span class="p">();</span>
+</span><span class='line'>    <span class="o">*</span><span class="n">ret</span> <span class="o">=</span> <span class="n">fib</span><span class="p">(</span><span class="n">agg</span><span class="o">-&gt;</span><span class="n">n</span><span class="p">);</span>
+</span><span class='line'>    <span class="n">__cilk_helper_epilogue</span><span class="p">();</span>
+</span><span class='line'>  <span class="p">...</span> <span class="p">...</span>
+</span><span class='line'><span class="p">}</span>
+</span><span class='line'><span class="kt">int</span> <span class="n">fib</span> <span class="p">(</span><span class="kt">int</span> <span class="n">n</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>  <span class="p">...</span> <span class="p">...</span>
+</span><span class='line'>    <span class="n">__cilkrts_stack_frame</span> <span class="n">sf</span><span class="p">;</span>
+</span><span class='line'>    <span class="n">__cilk_parent_prologue</span><span class="p">(</span><span class="o">&amp;</span><span class="n">sf</span><span class="p">);</span>
+</span><span class='line'>  <span class="p">...</span> <span class="p">...</span>
+</span><span class='line'><span class="n">cilk</span><span class="p">.</span><span class="n">spawn</span><span class="p">.</span><span class="nl">savestate:</span>
+</span><span class='line'>    <span class="kt">int</span> <span class="n">a</span><span class="p">;</span>
+</span><span class='line'>    <span class="k">if</span> <span class="p">(</span><span class="o">!</span> <span class="n">SETJMP</span><span class="p">(</span><span class="o">&amp;</span><span class="n">sf</span><span class="p">.</span><span class="n">ctx</span><span class="p">))</span>
+</span><span class='line'>        <span class="k">goto</span> <span class="n">cilk</span><span class="p">.</span><span class="n">spawn</span><span class="p">.</span><span class="n">helpercall</span><span class="p">;</span>
+</span><span class='line'>    <span class="k">else</span>
+</span><span class='line'>        <span class="k">goto</span> <span class="n">cilk</span><span class="p">.</span><span class="n">spawn</span><span class="p">.</span><span class="n">continuation</span><span class="p">;</span>
+</span><span class='line'><span class="n">cilk</span><span class="p">.</span><span class="n">spawn</span><span class="p">.</span><span class="nl">helpercall:</span>
+</span><span class='line'>    <span class="k">struct</span> <span class="n">struct_anon</span> <span class="n">agg</span> <span class="o">=</span> <span class="p">{</span> <span class="n">n</span> <span class="o">-</span> <span class="mi">1</span> <span class="p">};</span>
+</span><span class='line'>    <span class="n">__cilk_spawn_helper_fib</span><span class="p">(</span><span class="o">&amp;</span><span class="n">agg</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">a</span><span class="p">);</span>
+</span><span class='line'><span class="n">cilk</span><span class="p">.</span><span class="n">spawn</span><span class="p">.</span><span class="nl">continuation:</span>
+</span><span class='line'>    <span class="kt">int</span> <span class="n">b</span> <span class="o">=</span> <span class="n">fib</span><span class="p">(</span><span class="n">n</span><span class="o">-</span><span class="mi">2</span><span class="p">);</span>
+</span><span class='line'><span class="n">cilk</span><span class="p">.</span><span class="n">sync</span><span class="p">.</span><span class="nl">savestate:</span>
+</span><span class='line'>    <span class="k">if</span> <span class="p">(</span><span class="n">sf</span><span class="p">.</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="n">CILK_FRAME_UNSYNCHED</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>        <span class="k">if</span> <span class="p">(</span><span class="o">!</span> <span class="n">SETJMP</span><span class="p">(</span><span class="n">sf</span><span class="p">.</span><span class="n">ctx</span><span class="p">))</span>
+</span><span class='line'>            <span class="k">goto</span> <span class="n">cilk</span><span class="p">.</span><span class="n">sync</span><span class="p">.</span><span class="n">call</span><span class="p">;</span>
+</span><span class='line'>    <span class="p">}</span>
+</span><span class='line'><span class="n">cilk</span><span class="p">.</span><span class="n">sync</span><span class="p">.</span><span class="nl">exit:</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span><span class="p">;</span>
+</span><span class='line'><span class="n">cilk</span><span class="p">.</span><span class="n">sync</span><span class="p">.</span><span class="nl">call:</span>
+</span><span class='line'>    <span class="n">__cilkrts_sync</span><span class="p">(</span><span class="o">&amp;</span><span class="n">sf</span><span class="p">);</span>
+</span><span class='line'>    <span class="k">goto</span> <span class="n">cilk</span><span class="p">.</span><span class="n">sync</span><span class="p">.</span><span class="n">exit</span><span class="p">;</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<ul>
+<li><p>首先，利用 setjmp 将当前“主线程”执行状态保存，然后 if 分支直接进入 _cilk_spawn_helper_fib 函数执行。</p></li>
+<li><p>在_cilk_spawn_helper_fib 函数中，先调用 _cilk_helper_prologue，执行工作包括将刚才保存的任务放到任务队列中；然后执行真正的计算任务 fib；结束计算后，执行 _cilk_helper_epilogue 函数检查“主线程”任务是否已被“窃取”，决定后续执行的路径。</p></li>
+<li><p>若任务没有被&#8221;窃取&#8221;，即执行“Fast Clone”，那么函数直接返回，继续计算 fib(n-2) &hellip;</p></li>
+<li><p>否则，通过 long_jmp 机制跳转到 <strong>cilk.sync.savestate</strong> 处，由新任务保存的状态，完成最后的返回操作；另一方面，被窃取执行的新任务则执行 fib(n-2)，然后在 <strong>cilk.sync.savestate</strong> 处用 setjmp 保存执行状态，再执行 sync 操作 —— 之后，这个新任务就结束了，等待与之并行的那个 Spawn 的任务返回完成后续操作。</p></li>
+</ul>
+
+
+<p>我把上面这个流程花了一个草图，供大家参考：</p>
+
+<p><img class="center" src="/images/2014/cilkrts_cg.jpeg"></p>
+
+<h1>总结</h1>
+
+<p>Cilkplus的运行时是我目前所知利用 setjmp / long_jmp 机制实现 &ldquo;N:M&rdquo; 协程系统的唯一实现，并且经过多年发展已经非常成熟。
+目前，Cilkplus不仅为Intel自家的ICC编译器所支持，同时已合并到GCC主干，成为了GCC支持的语言。另外，基于Clang/LLVM的编译器也已经开源并已初具规模。</p>
+
+<p>由于Cilkplus主要面向的高性能计算领域目前还是被Intel架构服务器所主宰，所以仅支持Intel X86 / X64 架构的策略暂时还无伤大雅。
+但如果要实现一套更加通用的协程系统，那么依靠“setjmp / long_jmp”机制本身可能就比较困难了。</p>
+
+<p>好了，今天的内容就是这些。下次将介绍基于“ucontext”的协程实现机制，敬请关注！</p>
+</div>
+
+<div class="meta">
+	
+		<span class="comments"><a href="/blog/2014/07/10/cxie-cheng-zhi-setjmp-slash-long-jmp/#disqus_thread">Comments</a></span>
+	
+</div>
+</article>
+
+	<div class="share">
+	<div class="addthis_toolbox addthis_default_style ">
+	
+	
+	<a class="addthis_button_tweet"></a>
+	
+	
+	<a class="addthis_counter addthis_pill_style"></a>
+	</div>
+  <script type="text/javascript" src="http://s7.addthis.com/js/250/addthis_widget.js#pubid="></script>
+</div>
+
+
+
+<section id="comment">
+    <h2 class="title">Comments</h2>
+    <div id="disqus_thread" aria-live="polite"><noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+</div>
+</section>
+
+    </div>
+    <footer id="footer">
+    <div style="display:inline">
+    Copyright &copy; 2016
+
+    Amal Cao
+. Powered by <a href="http://octopress.org">Octopress</a> | 
+    Theme <a href="http://github.com/panks/fabric">fabric</a> by <a href="http://panks.me">Pankaj Kumar</a>
+</div>
+
+
+    </footer>
+    <script src="/javascripts/fabric.js"></script>
+<script src="/javascripts/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+(function($){
+	$('.fancybox').fancybox();
+})(jQuery);
+</script> <!-- Delete or comment this line to disable Fancybox -->
+
+
+<script type="text/javascript">
+      var disqus_shortname = 'amalsblog';
+      
+        
+        // var disqus_developer = 1;
+        var disqus_identifier = 'http://amalcao.github.io/blog/2014/07/10/cxie-cheng-zhi-setjmp-slash-long-jmp/';
+        var disqus_url = 'http://amalcao.github.io/blog/2014/07/10/cxie-cheng-zhi-setjmp-slash-long-jmp/';
+        var disqus_script = 'embed.js';
+      
+    (function () {
+      var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+      dsq.src = 'http://' + disqus_shortname + '.disqus.com/' + disqus_script;
+      (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    }());
+</script>
+
+
+
+
+
+<!-- end toload --> 
+</div>
+</div>
+<script src="/javascripts/jquery.ui.totop.js" type="text/javascript"></script>
+<script type="text/javascript">
+/*<![CDATA[*/
+;(function($){$().UItoTop({easingType:'easeOutCirc'});})(jQuery); 
+/*]]>*/
+</script><!-- remove it to remove the scroll to top button -->
+</body>
+</html>

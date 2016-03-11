@@ -1,0 +1,443 @@
+
+<!DOCTYPE HTML>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>Go 语言对OS系统调用的处理 - AmaL'sbLoG</title>
+    <meta name="author" content="Amal Cao">
+    
+	<meta name="description" content="上回讲Goroutine状态变换的时候，遗留了一部分关于Syscall处理的内容，这次打算把Go语言对Syscall的处理机制系统的总结一下，放在今天这篇文章中。 Go 语言库对Syscall的封装 我们知道Go是一门面向系统级开发的Native编程语言，与C/C++ 类似， &hellip;">
+	
+	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+	<link href="/atom.xml" rel="alternate" title="AmaL'sbLoG" type="application/atom+xml">
+	<link rel="canonical" href="">
+	<link href="/favicon.ico" rel="shortcut icon">
+    <link href="/stylesheets/screen.css" media="screen, projection" rel="stylesheet" type="text/css">
+
+    <link href='http://fonts.googleapis.com/css?family=Slackey' rel='stylesheet' type='text/css'>
+    <link href='http://fonts.googleapis.com/css?family=Fjalla+One' rel='stylesheet' type='text/css'>
+    <link href='http://fonts.googleapis.com/css?family=Amethysta' rel='stylesheet' type='text/css'>
+	<script src="//ajax.googleapis.com/ajax/libs/jquery/1.8.2/jquery.min.js"></script>
+    <!--[if lt IE 9]><script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script><![endif]-->
+
+    <script type="text/javascript" src="/javascripts/jquery-tapir.js"></script>
+
+    <!-- remove or comment it to disable ajaxification -->   
+    <script src="/javascripts/ajaxify.js"></script>
+   
+    
+    
+
+</head>
+
+
+<body>
+    <div id="wrapper">
+    <header id="header" class="inner"><!-- for more effects see _animate.scss -->
+<h1 class="animated bounceInDown">
+    <div id="headerbg">
+        Amal Cao
+    </div>
+</h1>
+<br>
+
+<ul id="social-links" style="text-align:center">
+  
+  
+  <!-- Google Plus -->
+  <li>
+  <a href="http://plus.google.com/u/0/115894150619087578630?rel=author" class="google" title="Google+"></a>
+  </li>
+  
+  
+  
+  
+  
+  
+  
+</ul>
+
+
+<!-- use full url including 'index.html' for navigation bar if you are using ajax -->
+<ul id="nav">
+	<li id="ajax"><a href="/index.html">Home</a></li>
+	<li id="ajax"><a href="/blog/archives/index.html">Archives</a></li>
+    <li><a href="/atom.xml">RSS</a></li>
+    
+    <li>
+    <div id="dark">
+        <form method="get" action="/search.html" id="search">
+            <input name="query" type="text" placeholder="Search..." x-webkit-speech />
+        </form>
+    </div>
+    </li>
+        
+</ul>
+
+
+
+
+</header>
+
+<div id="toload">
+<!-- begin toload --> 
+    <div id="content" class="inner">
+        <article class="post">
+	<h2 class="title">Go 语言对OS系统调用的处理</h2>
+	<div class="entry-content"><blockquote><p><em>上回讲Goroutine状态变换的时候，遗留了一部分关于Syscall处理的内容，这次打算把Go语言对Syscall的处理机制系统的总结一下，放在今天这篇文章中。</em></p></blockquote>
+
+<h2>Go 语言库对Syscall的封装</h2>
+
+<p>我们知道Go是一门面向系统级开发的Native编程语言，与C/C++ 类似，Go的编译器会直接将程序编译、链接成本地可执行文件。理论上，它可以完成任何C/C++语言能完成的。作为支撑该特性的重要方面，Go以标准库形式提供了<a href="http://golang.org/pkg/syscall">syscall包</a>，用来支持OS级系统调用。</p>
+
+<p>首先，Go对各种系统调用接口进行了封装，提供给用户一组Go语言函数，方便在程序中直接调用，如：</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='go'><span class='line'><span class="kd">func</span> <span class="nx">Read</span><span class="p">(</span><span class="nx">fd</span> <span class="kt">int</span><span class="p">,</span> <span class="nx">p</span> <span class="p">[]</span><span class="kt">byte</span><span class="p">)</span> <span class="p">(</span><span class="nx">n</span> <span class="kt">int</span><span class="p">,</span> <span class="nx">err</span> <span class="kt">error</span><span class="p">)</span>
+</span><span class='line'><span class="kd">func</span> <span class="nx">Write</span><span class="p">(</span><span class="nx">fd</span> <span class="kt">int</span><span class="p">,</span> <span class="nx">p</span> <span class="p">[]</span><span class="kt">byte</span><span class="p">)</span> <span class="p">(</span><span class="nx">n</span> <span class="kt">int</span><span class="p">,</span> <span class="nx">err</span> <span class="kt">error</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>同时，Go还通过以下函数提供了对Syscall的直接调用支持：</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='go'><span class='line'><span class="kd">func</span> <span class="nx">Syscall</span><span class="p">(</span><span class="nx">trap</span><span class="p">,</span> <span class="nx">a1</span><span class="p">,</span> <span class="nx">a2</span><span class="p">,</span> <span class="nx">a3</span> <span class="kt">uintptr</span><span class="p">)</span> <span class="p">(</span><span class="nx">r1</span><span class="p">,</span> <span class="nx">r2</span> <span class="kt">uintptr</span><span class="p">,</span> <span class="nx">err</span> <span class="nx">Errno</span><span class="p">)</span>
+</span><span class='line'><span class="kd">func</span> <span class="nx">Syscall6</span><span class="p">(</span><span class="nx">trap</span><span class="p">,</span> <span class="nx">a1</span><span class="p">,</span> <span class="nx">a2</span><span class="p">,</span> <span class="nx">a3</span><span class="p">,</span> <span class="nx">a4</span><span class="p">,</span> <span class="nx">a5</span><span class="p">,</span> <span class="nx">a6</span> <span class="kt">uintptr</span><span class="p">)</span> <span class="p">(</span><span class="nx">r1</span><span class="p">,</span> <span class="nx">r2</span> <span class="kt">uintptr</span><span class="p">,</span> <span class="nx">err</span> <span class="nx">Errno</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="kd">func</span> <span class="nx">RawSyscall</span><span class="p">(</span><span class="nx">trap</span><span class="p">,</span> <span class="nx">a1</span><span class="p">,</span> <span class="nx">a2</span><span class="p">,</span> <span class="nx">a3</span> <span class="kt">uintptr</span><span class="p">)</span> <span class="p">(</span><span class="nx">r1</span><span class="p">,</span> <span class="nx">r2</span> <span class="kt">uintptr</span><span class="p">,</span> <span class="nx">err</span> <span class="nx">Errno</span><span class="p">)</span>
+</span><span class='line'><span class="kd">func</span> <span class="nx">RawSyscall6</span><span class="p">(</span><span class="nx">trap</span><span class="p">,</span> <span class="nx">a1</span><span class="p">,</span> <span class="nx">a2</span><span class="p">,</span> <span class="nx">a3</span><span class="p">,</span> <span class="nx">a4</span><span class="p">,</span> <span class="nx">a5</span><span class="p">,</span> <span class="nx">a6</span> <span class="kt">uintptr</span><span class="p">)</span> <span class="p">(</span><span class="nx">r1</span><span class="p">,</span> <span class="nx">r2</span> <span class="kt">uintptr</span><span class="p">,</span> <span class="nx">err</span> <span class="nx">Errno</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>其中，带有<code>Raw</code>前缀的一组操作表示直接调用syscall （<em>注：以Linux为例，在AMD64中是通过<code>syscall</code>指令实现，在X86中是<code>int 0x80</code>软中断，而ARM中则是采用<code>SWI</code>软中断实现系统调用</em>），而不带<code>Raw</code>前缀的操作则在真正调用syscall前会先调用<code>runtime·entersyscall</code>，并在syscall返回后插入<code>runtime·exitsyscall</code>。这两个辅助函数的功能我们在前面介绍调度器时已经说过了，后面还会再提。</p>
+
+<p>这4个函数全都是用汇编语言实现的，并且和具体的硬件架构及OS相关，比如Linux下ARM架构的相应实现，在 <code>src/pkg/syscall/asm_linux_arm.s</code>中。至于其他的如<code>Read/Write</code>这类的函数，其内部<strong>基本上</strong>都调用上面的4个函数实现的。</p>
+
+<h2>运行时支持</h2>
+
+<p>我们之前讲了很多次，Go语言runtime为了实现较高的并发度，对OS系统调用做了一些优化，主要就体现在<code>runtime·entersyscall</code>和入<code>runtime·exitsyscall</code>这两个函数上，它们的实现代码在<code>src/pkg/runtime/proc.c</code>之中，之前我们已经多次讨论过这个文件了。</p>
+
+<p>在分析实现代前，我们先来看看函数的声明，位置在<code>src/pkg/runtime/runtime.h</code>中：</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="kt">void</span> <span class="n">runtime</span><span class="err">·</span><span class="n">entersyscall</span><span class="p">(</span><span class="kt">void</span><span class="p">);</span>
+</span><span class='line'><span class="kt">void</span> <span class="n">runtime</span><span class="err">·</span><span class="n">entersyscallblock</span><span class="p">(</span><span class="kt">void</span><span class="p">);</span>
+</span><span class='line'><span class="kt">void</span> <span class="n">runtime</span><span class="err">·</span><span class="n">exitsyscall</span><span class="p">(</span><span class="kt">void</span><span class="p">);</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>这里声明了3个函数，多了一个<code>void runtime·entersyscallblock(void)</code>，在后面会分析它的功能和使用情况。</p>
+
+<p>好了，现在来看实现代码。首先，我们很容易找到了<code>void runtime·exitsyscall(void)</code> 的实现，而另外两个却找不到，只是找到了两个与之向接近的函数定义，分别是：</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="kt">void</span> <span class="err">·</span><span class="n">entersyscall</span><span class="p">(</span><span class="kt">int</span> <span class="n">dummy</span><span class="p">)</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>
+</span><span class='line'><span class="kt">void</span> <span class="err">·</span><span class="n">entersyscallblock</span><span class="p">(</span><span class="kt">int</span> <span class="n">dummy</span><span class="p">)</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>通过反汇编分析，我发现代码中所有对<code>runtime·entersyscall</code>和<code>runtime·entersyscallblock</code>的调用最后都分别映射到了<code>·entersyscall</code> 和<code>·entersyscallblock</code>，也就是说前面两个函数分别是后面两个函数的别名。至于为什么这样实现，我没有找到相关的文档说明，但感觉应该主要是由于前后两组函数参数不同的关系 —— 函数调用本身是不需要传入参数的，而函数实现时，无中生有了一个<code>dummy</code>参数，其目的就是为了通过该参数指针（地址）方便定位调用者的PC和SP值。</p>
+
+<h3>runtime·entersyscall</h3>
+
+<p>好了，我们回到函数实现分析上来，看看进入系统调用前，runtime究竟都做了那些特别处理。下面将这个函数分成3段进行分析：</p>
+
+<ul>
+<li><p>首先，函数通过“pragma”将该函数声明为“NOSPLIT”，令其中的函数调用不触发栈扩展检查。</p>
+
+<p>  刚进入函数，先禁止抢占，然后通过<code>dummy</code>参数获得调用者的SP和PC值（<em>通过<code>save</code>函数保存到<code>g-&gt;sched.sp</code>和<code>g-&gt;sched.pc</code></em>），将其分别保存到groutine的<code>syscallsp</code>和<code>syscallpc</code>字段，同时记录的字段还有<code>syscallstack</code>和<code>syscallguard</code>。这些字段的功能主要是使得垃圾收集器明确栈分析的边界 —— 对于正在进行系统调用的任务，只对其进入系统调用前的栈进行“标记-清除”。（<em>实际上，Go语言的cgo机制也利用了<code>entersyscall</code>，因而cgo运行的代码不受垃圾收集机制管理。</em>）</p>
+
+<p>  然后，Goroutine的状态切换到<code>Gsyscall</code>状态。</p></li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="cp">#pragma textflag NOSPLIT</span>
+</span><span class='line'><span class="kt">void</span>
+</span><span class='line'><span class="err">·</span><span class="n">entersyscall</span><span class="p">(</span><span class="n">int32</span> <span class="n">dummy</span><span class="p">)</span>
+</span><span class='line'><span class="p">{</span>
+</span><span class='line'>  <span class="c1">// Disable preemption because during this function g is in Gsyscall status,</span>
+</span><span class='line'>  <span class="c1">// but can have inconsistent g-&gt;sched, do not let GC observe it.</span>
+</span><span class='line'>  <span class="n">m</span><span class="o">-&gt;</span><span class="n">locks</span><span class="o">++</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c1">// Leave SP around for GC and traceback.</span>
+</span><span class='line'>  <span class="n">save</span><span class="p">(</span><span class="n">runtime</span><span class="err">·</span><span class="n">getcallerpc</span><span class="p">(</span><span class="o">&amp;</span><span class="n">dummy</span><span class="p">),</span> <span class="n">runtime</span><span class="err">·</span><span class="n">getcallersp</span><span class="p">(</span><span class="o">&amp;</span><span class="n">dummy</span><span class="p">));</span>
+</span><span class='line'>  <span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallsp</span> <span class="o">=</span> <span class="n">g</span><span class="o">-&gt;</span><span class="n">sched</span><span class="p">.</span><span class="n">sp</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallpc</span> <span class="o">=</span> <span class="n">g</span><span class="o">-&gt;</span><span class="n">sched</span><span class="p">.</span><span class="n">pc</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallstack</span> <span class="o">=</span> <span class="n">g</span><span class="o">-&gt;</span><span class="n">stackbase</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallguard</span> <span class="o">=</span> <span class="n">g</span><span class="o">-&gt;</span><span class="n">stackguard</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">g</span><span class="o">-&gt;</span><span class="n">status</span> <span class="o">=</span> <span class="n">Gsyscall</span><span class="p">;</span>
+</span><span class='line'>  <span class="k">if</span><span class="p">(</span><span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallsp</span> <span class="o">&lt;</span> <span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallguard</span><span class="o">-</span><span class="n">StackGuard</span> <span class="o">||</span> <span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallstack</span> <span class="o">&lt;</span> <span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallsp</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>      <span class="c1">// runtime·printf(&quot;entersyscall inconsistent %p [%p,%p]\n&quot;,</span>
+</span><span class='line'>      <span class="c1">// g-&gt;syscallsp, g-&gt;syscallguard-StackGuard, g-&gt;syscallstack);</span>
+</span><span class='line'>      <span class="n">runtime</span><span class="err">·</span><span class="k">throw</span><span class="p">(</span><span class="s">&quot;entersyscall&quot;</span><span class="p">);</span>
+</span><span class='line'>  <span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<ul>
+<li>下面的代码是唤醒runtime的后台监控线程<code>sysmon</code>，在之前讲调度器的时候说过，<code>sysmon</code>会监控所有执行syscall的线程M，一旦超过某个时间阈值，就将该M与对应的P解耦。</li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="k">if</span><span class="p">(</span><span class="n">runtime</span><span class="err">·</span><span class="n">atomicload</span><span class="p">(</span><span class="o">&amp;</span><span class="n">runtime</span><span class="err">·</span><span class="n">sched</span><span class="p">.</span><span class="n">sysmonwait</span><span class="p">))</span> <span class="p">{</span>  <span class="c1">// TODO: fast atomic</span>
+</span><span class='line'>  <span class="n">runtime</span><span class="err">·</span><span class="n">lock</span><span class="p">(</span><span class="o">&amp;</span><span class="n">runtime</span><span class="err">·</span><span class="n">sched</span><span class="p">);</span>
+</span><span class='line'>  <span class="k">if</span><span class="p">(</span><span class="n">runtime</span><span class="err">·</span><span class="n">atomicload</span><span class="p">(</span><span class="o">&amp;</span><span class="n">runtime</span><span class="err">·</span><span class="n">sched</span><span class="p">.</span><span class="n">sysmonwait</span><span class="p">))</span> <span class="p">{</span>
+</span><span class='line'>      <span class="n">runtime</span><span class="err">·</span><span class="n">atomicstore</span><span class="p">(</span><span class="o">&amp;</span><span class="n">runtime</span><span class="err">·</span><span class="n">sched</span><span class="p">.</span><span class="n">sysmonwait</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</span><span class='line'>      <span class="n">runtime</span><span class="err">·</span><span class="n">notewakeup</span><span class="p">(</span><span class="o">&amp;</span><span class="n">runtime</span><span class="err">·</span><span class="n">sched</span><span class="p">.</span><span class="n">sysmonnote</span><span class="p">);</span>
+</span><span class='line'>  <span class="p">}</span>
+</span><span class='line'>  <span class="n">runtime</span><span class="err">·</span><span class="n">unlock</span><span class="p">(</span><span class="o">&amp;</span><span class="n">runtime</span><span class="err">·</span><span class="n">sched</span><span class="p">);</span>
+</span><span class='line'>  <span class="n">save</span><span class="p">(</span><span class="n">runtime</span><span class="err">·</span><span class="n">getcallerpc</span><span class="p">(</span><span class="o">&amp;</span><span class="n">dummy</span><span class="p">),</span> <span class="n">runtime</span><span class="err">·</span><span class="n">getcallersp</span><span class="p">(</span><span class="o">&amp;</span><span class="n">dummy</span><span class="p">));</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<ul>
+<li><p>将M的<code>mcache</code>字段置空，并将P的<code>m</code>字段置空，将P的状态切换到<code>Psyscall</code>（注意，与G类似，P也存在若干状态的切换，<code>Psyscall</code> 和 <code>Pgcstop</code>都是其中的状态）。</p>
+
+<p>  检查系统此刻是否需要进行“垃圾收集”，注意，syscall和gc是可以并行执行的。</p>
+
+<p>  由于处于syscall状态的任务是不能进行栈分裂的，因此通过<code>g-&gt;stackguard0 = StackPreempt</code>使得后续操作时，一旦出现意外调用了栈分裂操作，都会进入 runtime的<code>morestack</code>函数并捕获到错误。最后别忘记重新使能任务抢占。</p></li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="n">m</span><span class="o">-&gt;</span><span class="n">mcache</span> <span class="o">=</span> <span class="n">nil</span><span class="p">;</span>
+</span><span class='line'><span class="n">m</span><span class="o">-&gt;</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">m</span> <span class="o">=</span> <span class="n">nil</span><span class="p">;</span>
+</span><span class='line'><span class="n">runtime</span><span class="err">·</span><span class="n">atomicstore</span><span class="p">(</span><span class="o">&amp;</span><span class="n">m</span><span class="o">-&gt;</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">status</span><span class="p">,</span> <span class="n">Psyscall</span><span class="p">);</span>
+</span><span class='line'><span class="k">if</span><span class="p">(</span><span class="n">runtime</span><span class="err">·</span><span class="n">sched</span><span class="p">.</span><span class="n">gcwaiting</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>  <span class="n">runtime</span><span class="err">·</span><span class="n">lock</span><span class="p">(</span><span class="o">&amp;</span><span class="n">runtime</span><span class="err">·</span><span class="n">sched</span><span class="p">);</span>
+</span><span class='line'>  <span class="k">if</span> <span class="p">(</span><span class="n">runtime</span><span class="err">·</span><span class="n">sched</span><span class="p">.</span><span class="n">stopwait</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="n">runtime</span><span class="err">·</span><span class="n">cas</span><span class="p">(</span><span class="o">&amp;</span><span class="n">m</span><span class="o">-&gt;</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">status</span><span class="p">,</span> <span class="n">Psyscall</span><span class="p">,</span> <span class="n">Pgcstop</span><span class="p">))</span> <span class="p">{</span>
+</span><span class='line'>      <span class="k">if</span><span class="p">(</span><span class="o">--</span><span class="n">runtime</span><span class="err">·</span><span class="n">sched</span><span class="p">.</span><span class="n">stopwait</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>
+</span><span class='line'>          <span class="n">runtime</span><span class="err">·</span><span class="n">notewakeup</span><span class="p">(</span><span class="o">&amp;</span><span class="n">runtime</span><span class="err">·</span><span class="n">sched</span><span class="p">.</span><span class="n">stopnote</span><span class="p">);</span>
+</span><span class='line'>  <span class="p">}</span>
+</span><span class='line'>  <span class="n">runtime</span><span class="err">·</span><span class="n">unlock</span><span class="p">(</span><span class="o">&amp;</span><span class="n">runtime</span><span class="err">·</span><span class="n">sched</span><span class="p">);</span>
+</span><span class='line'>  <span class="n">save</span><span class="p">(</span><span class="n">runtime</span><span class="err">·</span><span class="n">getcallerpc</span><span class="p">(</span><span class="o">&amp;</span><span class="n">dummy</span><span class="p">),</span> <span class="n">runtime</span><span class="err">·</span><span class="n">getcallersp</span><span class="p">(</span><span class="o">&amp;</span><span class="n">dummy</span><span class="p">));</span>
+</span><span class='line'><span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="c1">// Goroutines must not split stacks in Gsyscall status (it would corrupt g-&gt;sched).</span>
+</span><span class='line'><span class="c1">// We set stackguard to StackPreempt so that first split stack check calls morestack.</span>
+</span><span class='line'><span class="c1">// Morestack detects this case and throws.</span>
+</span><span class='line'><span class="n">g</span><span class="o">-&gt;</span><span class="n">stackguard0</span> <span class="o">=</span> <span class="n">StackPreempt</span><span class="p">;</span>
+</span><span class='line'><span class="n">m</span><span class="o">-&gt;</span><span class="n">locks</span><span class="o">--</span><span class="p">;</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p><em>这里提一个问题：为什么每次调用<code>runtime·lock(&amp;runtime.sched)</code>及<code>runtime·unlock(&amp;runtime·sched)</code>后，都要重新调用<code>save</code>保存SP和PC值呢？</em></p>
+
+<h3>runtime·entersyscallblock</h3>
+
+<p>与 <code>·entersyscall</code>函数不同，<code>·entersyscallblock</code>在一开始就认为当前执行的syscall 会执行一个相对比较长的时间，因此在进入该函数后，就进行了M和P的解耦操作，无需等待<code>sysmon</code>处理。</p>
+
+<ul>
+<li>该函数第一部分与<code>·entersyscall</code>函数类似：</li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="cp">#pragma textflag NOSPLIT</span>
+</span><span class='line'><span class="kt">void</span>
+</span><span class='line'><span class="err">·</span><span class="n">entersyscallblock</span><span class="p">(</span><span class="n">int32</span> <span class="n">dummy</span><span class="p">)</span>
+</span><span class='line'><span class="p">{</span>
+</span><span class='line'>  <span class="n">P</span> <span class="o">*</span><span class="n">p</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="n">m</span><span class="o">-&gt;</span><span class="n">locks</span><span class="o">++</span><span class="p">;</span>  <span class="c1">// see comment in entersyscall</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c1">// Leave SP around for GC and traceback.</span>
+</span><span class='line'>  <span class="n">save</span><span class="p">(</span><span class="n">runtime</span><span class="err">·</span><span class="n">getcallerpc</span><span class="p">(</span><span class="o">&amp;</span><span class="n">dummy</span><span class="p">),</span> <span class="n">runtime</span><span class="err">·</span><span class="n">getcallersp</span><span class="p">(</span><span class="o">&amp;</span><span class="n">dummy</span><span class="p">));</span>
+</span><span class='line'>  <span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallsp</span> <span class="o">=</span> <span class="n">g</span><span class="o">-&gt;</span><span class="n">sched</span><span class="p">.</span><span class="n">sp</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallpc</span> <span class="o">=</span> <span class="n">g</span><span class="o">-&gt;</span><span class="n">sched</span><span class="p">.</span><span class="n">pc</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallstack</span> <span class="o">=</span> <span class="n">g</span><span class="o">-&gt;</span><span class="n">stackbase</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallguard</span> <span class="o">=</span> <span class="n">g</span><span class="o">-&gt;</span><span class="n">stackguard</span><span class="p">;</span>
+</span><span class='line'>  <span class="n">g</span><span class="o">-&gt;</span><span class="n">status</span> <span class="o">=</span> <span class="n">Gsyscall</span><span class="p">;</span>
+</span><span class='line'>  <span class="k">if</span><span class="p">(</span><span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallsp</span> <span class="o">&lt;</span> <span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallguard</span><span class="o">-</span><span class="n">StackGuard</span> <span class="o">||</span> <span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallstack</span> <span class="o">&lt;</span> <span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallsp</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>      <span class="c1">// runtime·printf(&quot;entersyscall inconsistent %p [%p,%p]\n&quot;,</span>
+</span><span class='line'>      <span class="c1">// g-&gt;syscallsp, g-&gt;syscallguard-StackGuard, g-&gt;syscallstack);</span>
+</span><span class='line'>      <span class="n">runtime</span><span class="err">·</span><span class="k">throw</span><span class="p">(</span><span class="s">&quot;entersyscallblock&quot;</span><span class="p">);</span>
+</span><span class='line'>  <span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<ul>
+<li>后面的部分就不太一样了，基本上就是直接将当前M与P解耦，P重新回到<code>Pidle</code>状态。</li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="n">p</span> <span class="o">=</span> <span class="n">releasep</span><span class="p">();</span>
+</span><span class='line'><span class="n">handoffp</span><span class="p">(</span><span class="n">p</span><span class="p">);</span>
+</span><span class='line'><span class="k">if</span><span class="p">(</span><span class="n">g</span><span class="o">-&gt;</span><span class="n">isbackground</span><span class="p">)</span>  <span class="c1">// do not consider blocked scavenger for deadlock detection</span>
+</span><span class='line'>  <span class="n">incidlelocked</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+</span><span class='line'>
+</span><span class='line'><span class="c1">// Resave for traceback during blocked call.</span>
+</span><span class='line'><span class="n">save</span><span class="p">(</span><span class="n">runtime</span><span class="err">·</span><span class="n">getcallerpc</span><span class="p">(</span><span class="o">&amp;</span><span class="n">dummy</span><span class="p">),</span> <span class="n">runtime</span><span class="err">·</span><span class="n">getcallersp</span><span class="p">(</span><span class="o">&amp;</span><span class="n">dummy</span><span class="p">));</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">g</span><span class="o">-&gt;</span><span class="n">stackguard0</span> <span class="o">=</span> <span class="n">StackPreempt</span><span class="p">;</span>  <span class="c1">// see comment in entersyscall</span>
+</span><span class='line'><span class="n">m</span><span class="o">-&gt;</span><span class="n">locks</span><span class="o">--</span><span class="p">;</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>前面说过，所有<code>syscall</code>包中的系统调用封装都只调用了<code>runtime·entersyscall</code>，那么<code>runtime·entersyscallblock</code>的使用场景是什么呢？</p>
+
+<p>通过查找，发现Go1.2中，仅有的一处对<code>runtime·entersyscallblock</code>的使用来自<code>bool runtime.notetsleepg(Note *n, int64 ns)</code>中（<em>当然，针对不同的OS平台有Futex和Sema两种不同的实现</em>）。<code>Note</code>类型在Go中主要提供一种“通知-唤醒”机制，有点类似PThread中的“条件变量”。 为了实现高并发度，Go不但实现了线程级的阻塞，还提供了Goroutine级阻塞，使得一个运行的Goroutine也可以阻塞在一个<code>Note</code>上 —— 对应的P会解耦释放，因此系统整体并发性不会收到影响。</p>
+
+<p>上述机制在runtime中多有使用，比如在“定时器”模块中 —— 后面有机会会详细介绍。</p>
+
+<h3>runtime·exitsyscall</h3>
+
+<p>该函数主要的功能是从syscall状态恢复，其结构比较清晰，主要分为两个步骤：</p>
+
+<ul>
+<li>尝试调用<code>exitsyscallfast</code>函数，假设对应的M与P没有完全解耦，那么该操作会重新将M与P绑定；否则尝试获取另一个空闲的P并与当前M绑定。如果绑定成功，返回<code>true</code>，否则返回<code>false</code>，留待<code>runtime·exitsyscall</code>做后续处理。
+  代码如下：</li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="c1">// The goroutine g exited its system call.</span>
+</span><span class='line'><span class="c1">// Arrange for it to run on a cpu again.</span>
+</span><span class='line'><span class="c1">// This is called only from the go syscall library, not</span>
+</span><span class='line'><span class="c1">// from the low-level system calls used by the runtime.</span>
+</span><span class='line'><span class="cp">#pragma textflag NOSPLIT</span>
+</span><span class='line'><span class="kt">void</span>
+</span><span class='line'><span class="n">runtime</span><span class="err">·</span><span class="n">exitsyscall</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span>
+</span><span class='line'><span class="p">{</span>
+</span><span class='line'>  <span class="n">m</span><span class="o">-&gt;</span><span class="n">locks</span><span class="o">++</span><span class="p">;</span>  <span class="c1">// see comment in entersyscall</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="k">if</span><span class="p">(</span><span class="n">g</span><span class="o">-&gt;</span><span class="n">isbackground</span><span class="p">)</span>  <span class="c1">// do not consider blocked scavenger for deadlock detection</span>
+</span><span class='line'>      <span class="n">incidlelocked</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">);</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="k">if</span><span class="p">(</span><span class="n">exitsyscallfast</span><span class="p">())</span> <span class="p">{</span>
+</span><span class='line'>      <span class="c1">// There&#39;s a cpu for us, so we can run.</span>
+</span><span class='line'>      <span class="n">m</span><span class="o">-&gt;</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">syscalltick</span><span class="o">++</span><span class="p">;</span>
+</span><span class='line'>      <span class="n">g</span><span class="o">-&gt;</span><span class="n">status</span> <span class="o">=</span> <span class="n">Grunning</span><span class="p">;</span>
+</span><span class='line'>      <span class="c1">// Garbage collector isn&#39;t running (since we are),</span>
+</span><span class='line'>      <span class="c1">// so okay to clear gcstack and gcsp.</span>
+</span><span class='line'>      <span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallstack</span> <span class="o">=</span> <span class="p">(</span><span class="n">uintptr</span><span class="p">)</span><span class="n">nil</span><span class="p">;</span>
+</span><span class='line'>      <span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallsp</span> <span class="o">=</span> <span class="p">(</span><span class="n">uintptr</span><span class="p">)</span><span class="n">nil</span><span class="p">;</span>
+</span><span class='line'>      <span class="n">m</span><span class="o">-&gt;</span><span class="n">locks</span><span class="o">--</span><span class="p">;</span>
+</span><span class='line'>      <span class="k">if</span><span class="p">(</span><span class="n">g</span><span class="o">-&gt;</span><span class="n">preempt</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>          <span class="c1">// restore the preemption request in case we&#39;ve cleared it in newstack</span>
+</span><span class='line'>          <span class="n">g</span><span class="o">-&gt;</span><span class="n">stackguard0</span> <span class="o">=</span> <span class="n">StackPreempt</span><span class="p">;</span>
+</span><span class='line'>      <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+</span><span class='line'>          <span class="c1">// otherwise restore the real stackguard, we&#39;ve spoiled it in entersyscall/entersyscallblock</span>
+</span><span class='line'>          <span class="n">g</span><span class="o">-&gt;</span><span class="n">stackguard0</span> <span class="o">=</span> <span class="n">g</span><span class="o">-&gt;</span><span class="n">stackguard</span><span class="p">;</span>
+</span><span class='line'>      <span class="p">}</span>
+</span><span class='line'>      <span class="k">return</span><span class="p">;</span>
+</span><span class='line'>  <span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="n">m</span><span class="o">-&gt;</span><span class="n">locks</span><span class="o">--</span><span class="p">;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<ul>
+<li>如果<code>exitsyscallfast</code>函数失败，则需要将当前的groutine放回到任务队列中等待被其他“M&amp;P”调度执行，通过上一讲我们知道，类似的操作必须在g0的栈上执行，因此需要使用<code>runtime.mcall</code>来完成，代码如下：</li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class='code'><pre><code class='c++'><span class='line'><span class="c1">// Call the scheduler.</span>
+</span><span class='line'><span class="n">runtime</span><span class="err">·</span><span class="n">mcall</span><span class="p">(</span><span class="n">exitsyscall0</span><span class="p">);</span>
+</span><span class='line'>
+</span><span class='line'><span class="c1">// Scheduler returned, so we&#39;re allowed to run now.</span>
+</span><span class='line'><span class="c1">// Delete the gcstack information that we left for</span>
+</span><span class='line'><span class="c1">// the garbage collector during the system call.</span>
+</span><span class='line'><span class="c1">// Must wait until now because until gosched returns</span>
+</span><span class='line'><span class="c1">// we don&#39;t know for sure that the garbage collector</span>
+</span><span class='line'><span class="c1">// is not running.</span>
+</span><span class='line'><span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallstack</span> <span class="o">=</span> <span class="p">(</span><span class="n">uintptr</span><span class="p">)</span><span class="n">nil</span><span class="p">;</span>
+</span><span class='line'><span class="n">g</span><span class="o">-&gt;</span><span class="n">syscallsp</span> <span class="o">=</span> <span class="p">(</span><span class="n">uintptr</span><span class="p">)</span><span class="n">nil</span><span class="p">;</span>
+</span><span class='line'><span class="n">m</span><span class="o">-&gt;</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">syscalltick</span><span class="o">++</span><span class="p">;</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<ul>
+<li>我们再仔细看看<code>exitsyscall0</code>的实现，和runtime的其他部分类似，M对于放弃执行总是有点不太情愿，所以首先还是会先看看有没有空闲的P，如果还是没有，只好将groutine放回全局任务队列中，如果当前M与G是绑定的，那M必须阻塞直到有空闲P可用才能被唤醒执行；如果M没有与G绑定，则M线程结束。
+  最后，当这个goroutine被再次调度执行时，会返回到<code>runtime.mcall</code>调用后的代码处，做一些后续的清理工作 —— 将<code>syscallstack</code>和<code>syscallsp</code>字段清楚以保证GC的正确执行；对P的<code>syscalltick</code>字段增1。</li>
+</ul>
+
+
+<h2>一点说明</h2>
+
+<p>Go语言之所以设计了M及P这两个概念，并对执行syscall的线程进行特别处理，适当进行M和P的解耦，主要是为了提高并发度，降低频繁、长时间的阻塞syscall带来的问题。但是必须意识到，这种机制本身也存在一定的开销，比如任务迁移可能影响CACHE、TLB的性能。</p>
+
+<p>所以在实现中，并非所有的系统调用之前都会先调用<code>·entersyscall</code>。</p>
+
+<p>对于runtime中的一些底层syscall，比如所有的底层锁操作 —— 在Linux中使用的是<a href="http://en.wikipedia.org/wiki/Futex">Futex</a>机制 —— 相应的Lock/Unlock操作都使用了底层系统调用，此时线程会直接调用syscall而不需要其他的操作，这样主要是保证底层代码的高效执行。</p>
+
+<p>一些不容易造成执行线程阻塞的系统调用，在Go的<code>syscall</code>包中，通过<code>RawSyscall</code>进行封装，也不会调用<code>runtime·entersyscall</code>和<code>runtime·exitsyscall</code>提供的功能。</p>
+</div>
+
+<div class="meta">
+	
+		<span class="comments"><a href="/blog/2014/05/22/go-yu-yan-dui-osxi-tong-diao-yong-de-chu-li/#disqus_thread">Comments</a></span>
+	
+</div>
+</article>
+
+	<div class="share">
+	<div class="addthis_toolbox addthis_default_style ">
+	
+	
+	<a class="addthis_button_tweet"></a>
+	
+	
+	<a class="addthis_counter addthis_pill_style"></a>
+	</div>
+  <script type="text/javascript" src="http://s7.addthis.com/js/250/addthis_widget.js#pubid="></script>
+</div>
+
+
+
+<section id="comment">
+    <h2 class="title">Comments</h2>
+    <div id="disqus_thread" aria-live="polite"><noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+</div>
+</section>
+
+    </div>
+    <footer id="footer">
+    <div style="display:inline">
+    Copyright &copy; 2016
+
+    Amal Cao
+. Powered by <a href="http://octopress.org">Octopress</a> | 
+    Theme <a href="http://github.com/panks/fabric">fabric</a> by <a href="http://panks.me">Pankaj Kumar</a>
+</div>
+
+
+    </footer>
+    <script src="/javascripts/fabric.js"></script>
+<script src="/javascripts/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+(function($){
+	$('.fancybox').fancybox();
+})(jQuery);
+</script> <!-- Delete or comment this line to disable Fancybox -->
+
+
+<script type="text/javascript">
+      var disqus_shortname = 'amalsblog';
+      
+        
+        // var disqus_developer = 1;
+        var disqus_identifier = 'http://amalcao.github.io/blog/2014/05/22/go-yu-yan-dui-osxi-tong-diao-yong-de-chu-li/';
+        var disqus_url = 'http://amalcao.github.io/blog/2014/05/22/go-yu-yan-dui-osxi-tong-diao-yong-de-chu-li/';
+        var disqus_script = 'embed.js';
+      
+    (function () {
+      var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+      dsq.src = 'http://' + disqus_shortname + '.disqus.com/' + disqus_script;
+      (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    }());
+</script>
+
+
+
+
+
+<!-- end toload --> 
+</div>
+</div>
+<script src="/javascripts/jquery.ui.totop.js" type="text/javascript"></script>
+<script type="text/javascript">
+/*<![CDATA[*/
+;(function($){$().UItoTop({easingType:'easeOutCirc'});})(jQuery); 
+/*]]>*/
+</script><!-- remove it to remove the scroll to top button -->
+</body>
+</html>
