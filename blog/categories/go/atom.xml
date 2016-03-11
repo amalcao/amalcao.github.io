@@ -2,10 +2,10 @@
 <feed xmlns="http://www.w3.org/2005/Atom">
 
   <title><![CDATA[Category: Go | AmaL'sbLoG]]></title>
-  <link href="http://amalcao.github.io/blog/categories/go/atom.xml" rel="self"/>
-  <link href="http://amalcao.github.io/"/>
-  <updated>2016-03-11T17:06:35+08:00</updated>
-  <id>http://amalcao.github.io/</id>
+  <link href="http://blog.amalcao.me/blog/categories/go/atom.xml" rel="self"/>
+  <link href="http://blog.amalcao.me/"/>
+  <updated>2016-03-11T17:48:00+08:00</updated>
+  <id>http://blog.amalcao.me/</id>
   <author>
     <name><![CDATA[Amal Cao]]></name>
     <email><![CDATA[amalcaowei@gmail.com]]></email>
@@ -15,9 +15,9 @@
   
   <entry>
     <title type="html"><![CDATA[Go 语言对OS系统调用的处理]]></title>
-    <link href="http://amalcao.github.io/blog/2014/05/22/go-yu-yan-dui-osxi-tong-diao-yong-de-chu-li/"/>
+    <link href="http://blog.amalcao.me/blog/2014/05/22/go-yu-yan-dui-osxi-tong-diao-yong-de-chu-li/"/>
     <updated>2014-05-22T12:01:32+08:00</updated>
-    <id>http://amalcao.github.io/blog/2014/05/22/go-yu-yan-dui-osxi-tong-diao-yong-de-chu-li</id>
+    <id>http://blog.amalcao.me/blog/2014/05/22/go-yu-yan-dui-osxi-tong-diao-yong-de-chu-li</id>
     <content type="html"><![CDATA[<blockquote><p><em>上回讲Goroutine状态变换的时候，遗留了一部分关于Syscall处理的内容，这次打算把Go语言对Syscall的处理机制系统的总结一下，放在今天这篇文章中。</em></p></blockquote>
 
 <h2>Go 语言库对Syscall的封装</h2>
@@ -325,9 +325,9 @@ m-&gt;p-&gt;syscalltick++;
   
   <entry>
     <title type="html"><![CDATA[关于Go语言调度器实现细节的补充分析]]></title>
-    <link href="http://amalcao.github.io/blog/2014/05/16/guan-yu-goyu-yan-diao-du-qi-shi-xian-xi-jie-de-bu-chong-fen-xi/"/>
+    <link href="http://blog.amalcao.me/blog/2014/05/16/guan-yu-goyu-yan-diao-du-qi-shi-xian-xi-jie-de-bu-chong-fen-xi/"/>
     <updated>2014-05-16T09:23:44+08:00</updated>
-    <id>http://amalcao.github.io/blog/2014/05/16/guan-yu-goyu-yan-diao-du-qi-shi-xian-xi-jie-de-bu-chong-fen-xi</id>
+    <id>http://blog.amalcao.me/blog/2014/05/16/guan-yu-goyu-yan-diao-du-qi-shi-xian-xi-jie-de-bu-chong-fen-xi</id>
     <content type="html"><![CDATA[<blockquote><p><em>在之前的<a href="http://blog.amalcao.me/blog/2014/05/09/erlang-and-go-de-bing-fa-diao-du-qian-xi/">一篇博文</a>中，简单的介绍了一下Go调度器的原理。而进行了一番深入分析后，发现Go的调度器代码中存在许多值得玩味的细节，不仔细体会可能很难发觉作者的匠心。原本打算再写一篇文章系统的分析一下这些细节，但无意中发现了另一位爱好Go的朋友已经做类似的工作，并且结构非常清晰，内容也较准确（链接在<a href="https://github.com/tiancaiamao/go-internals">这里</a>），为了避免造成雷同就放弃了之前的计划，转而罗列一些个人认为的Go语言中比较有意思的点，分别展开介绍一下。文章结构随性，如果感觉缺少联系，请参考其他资料。</em></p></blockquote>
 
 <h2>Goroutine 状态的演变</h2>

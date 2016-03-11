@@ -2,10 +2,10 @@
 <feed xmlns="http://www.w3.org/2005/Atom">
 
   <title><![CDATA[Category: 并发编程 | AmaL'sbLoG]]></title>
-  <link href="http://amalcao.github.io/blog/categories/bing-fa-bian-cheng/atom.xml" rel="self"/>
-  <link href="http://amalcao.github.io/"/>
-  <updated>2016-03-11T17:06:35+08:00</updated>
-  <id>http://amalcao.github.io/</id>
+  <link href="http://blog.amalcao.me/blog/categories/bing-fa-bian-cheng/atom.xml" rel="self"/>
+  <link href="http://blog.amalcao.me/"/>
+  <updated>2016-03-11T17:48:00+08:00</updated>
+  <id>http://blog.amalcao.me/</id>
   <author>
     <name><![CDATA[Amal Cao]]></name>
     <email><![CDATA[amalcaowei@gmail.com]]></email>
@@ -15,9 +15,9 @@
   
   <entry>
     <title type="html"><![CDATA[构建C协程之ucontext篇（上）]]></title>
-    <link href="http://amalcao.github.io/blog/2014/07/10/cxie-cheng-zhi-ucontextpian-shang/"/>
+    <link href="http://blog.amalcao.me/blog/2014/07/10/cxie-cheng-zhi-ucontextpian-shang/"/>
     <updated>2014-07-10T16:57:50+08:00</updated>
-    <id>http://amalcao.github.io/blog/2014/07/10/cxie-cheng-zhi-ucontextpian-shang</id>
+    <id>http://blog.amalcao.me/blog/2014/07/10/cxie-cheng-zhi-ucontextpian-shang</id>
     <content type="html"><![CDATA[<h1>原理简介</h1>
 
 <p>所谓 “ucontext” 机制是 GNU C 库提供的一组用于创建、保存、切换用户态执行“上下文”（context）的API，可以看作是 “setjmp/long_jmp” 的“升级版”，主要包括以下四个函数：</p>
@@ -106,9 +106,9 @@ libgo的调度器部分基本用C开发并由GCC编译，“goroutine”（Go语
   
   <entry>
     <title type="html"><![CDATA[构建C协程之setjmp/long_jmp篇]]></title>
-    <link href="http://amalcao.github.io/blog/2014/07/10/cxie-cheng-zhi-setjmp-slash-long-jmp/"/>
+    <link href="http://blog.amalcao.me/blog/2014/07/10/cxie-cheng-zhi-setjmp-slash-long-jmp/"/>
     <updated>2014-07-10T16:15:20+08:00</updated>
-    <id>http://amalcao.github.io/blog/2014/07/10/cxie-cheng-zhi-setjmp-slash-long-jmp</id>
+    <id>http://blog.amalcao.me/blog/2014/07/10/cxie-cheng-zhi-setjmp-slash-long-jmp</id>
     <content type="html"><![CDATA[<h1>原理简介</h1>
 
 <p>在标准C中的头文件<code>&lt;setjmp.h&gt;</code>中定义了一组函数 setjmp / long_jmp 用来实现“非本地跳转”的功能，利用 setjmp 可以保存当前执行线索状态，稍后通过 long_jmp 函数可以实现状态的恢复，并且可以跨多层函数调用栈进行跳转。具体接口定义如下：</p>
@@ -721,9 +721,9 @@ goto cilk.sync.exit;
   
   <entry>
     <title type="html"><![CDATA[构建C协程之概述]]></title>
-    <link href="http://amalcao.github.io/blog/2014/07/10/cyu-yan-xie-cheng-xi-tong-jie-shao-zhi-yi/"/>
+    <link href="http://blog.amalcao.me/blog/2014/07/10/cyu-yan-xie-cheng-xi-tong-jie-shao-zhi-yi/"/>
     <updated>2014-07-10T15:23:40+08:00</updated>
-    <id>http://amalcao.github.io/blog/2014/07/10/cyu-yan-xie-cheng-xi-tong-jie-shao-zhi-yi</id>
+    <id>http://blog.amalcao.me/blog/2014/07/10/cyu-yan-xie-cheng-xi-tong-jie-shao-zhi-yi</id>
     <content type="html"><![CDATA[<blockquote><p> <em>从本篇开始，打算开启一个系列，专门介绍C语言环境下各种协程系统的实现机制，算是对前阶段工作的一个系统总结吧！
 目前的计划是根据实现机制的不同，分成两到三篇来介绍，具体的案例主要以 Go 和 Cilkplus 这两门语言的运行时环境为主，同时结合其他一些个人觉得比较有新意的小型开源系统。
 另外，最近陆陆续续分析了很多开源并发系统的代码，希望也能抽时间好好总结一下。</em></p></blockquote>
@@ -771,9 +771,9 @@ goto cilk.sync.exit;
   
   <entry>
     <title type="html"><![CDATA[Erlang &amp; Go 的IO优化策略简介]]></title>
-    <link href="http://amalcao.github.io/blog/2014/05/09/erlang-and-go-de-ioyou-hua-ce-lue-jian-jie/"/>
+    <link href="http://blog.amalcao.me/blog/2014/05/09/erlang-and-go-de-ioyou-hua-ce-lue-jian-jie/"/>
     <updated>2014-05-09T14:06:12+08:00</updated>
-    <id>http://amalcao.github.io/blog/2014/05/09/erlang-and-go-de-ioyou-hua-ce-lue-jian-jie</id>
+    <id>http://blog.amalcao.me/blog/2014/05/09/erlang-and-go-de-ioyou-hua-ce-lue-jian-jie</id>
     <content type="html"><![CDATA[<blockquote><p><em>之前关于调度器的对比分析的文章，在结束时遗留了一些问题：当系统出现高并发的IO访问时，如一个网络服务器通常要并发处理成百上千的链接，每个链接可能都是由一个用户任务执行的，那么将会出现大量阻塞的IO操作，如果为每个阻塞操作都单独分配一个OS线程，那么系统很容易就会退化成多OS线程的系统，轻量任务的优势将无从谈起。本文试图回答这个问题，通过分析Go和Erlang对于IO、特别是网络IO的优化机制，了解其对调度器乃至整个系统性能的影响。</em></p></blockquote>
 
 <h2>Go的IO优化机制 —— netpoller</h2>
@@ -854,9 +854,9 @@ goto cilk.sync.exit;
   
   <entry>
     <title type="html"><![CDATA[Erlang &amp; Go 消息传递机制初探]]></title>
-    <link href="http://amalcao.github.io/blog/2014/05/09/erlang-and-go-xiao-xi-chuan-di-ji-zhi-chu-tan/"/>
+    <link href="http://blog.amalcao.me/blog/2014/05/09/erlang-and-go-xiao-xi-chuan-di-ji-zhi-chu-tan/"/>
     <updated>2014-05-09T13:22:22+08:00</updated>
-    <id>http://amalcao.github.io/blog/2014/05/09/erlang-and-go-xiao-xi-chuan-di-ji-zhi-chu-tan</id>
+    <id>http://blog.amalcao.me/blog/2014/05/09/erlang-and-go-xiao-xi-chuan-di-ji-zhi-chu-tan</id>
     <content type="html"><![CDATA[<blockquote><p><em>上一篇文章介绍了 Go 和 Erlang 在调度器的实现，本文将简要介绍这两种并发语言的消息传递机制</em></p></blockquote>
 
 <h2>简要对比</h2>

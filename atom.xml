@@ -2,10 +2,10 @@
 <feed xmlns="http://www.w3.org/2005/Atom">
 
   <title><![CDATA[AmaL'sbLoG]]></title>
-  <link href="http://amalcao.github.io/atom.xml" rel="self"/>
-  <link href="http://amalcao.github.io/"/>
-  <updated>2016-03-11T17:06:35+08:00</updated>
-  <id>http://amalcao.github.io/</id>
+  <link href="http://blog.amalcao.me/atom.xml" rel="self"/>
+  <link href="http://blog.amalcao.me/"/>
+  <updated>2016-03-11T17:48:00+08:00</updated>
+  <id>http://blog.amalcao.me/</id>
   <author>
     <name><![CDATA[Amal Cao]]></name>
     <email><![CDATA[amalcaowei@gmail.com]]></email>
@@ -15,9 +15,9 @@
   
   <entry>
     <title type="html"><![CDATA[CoroC 语言开源]]></title>
-    <link href="http://amalcao.github.io/blog/2016/03/11/coroc-yu-yan-kai-yuan/"/>
+    <link href="http://blog.amalcao.me/blog/2016/03/11/coroc-yu-yan-kai-yuan/"/>
     <updated>2016-03-11T15:46:47+08:00</updated>
-    <id>http://amalcao.github.io/blog/2016/03/11/coroc-yu-yan-kai-yuan</id>
+    <id>http://blog.amalcao.me/blog/2016/03/11/coroc-yu-yan-kai-yuan</id>
     <content type="html"><![CDATA[<h1>CoroC 语言开源了</h1>
 
 <h2>CoroC 是什么？</h2>
@@ -55,15 +55,15 @@
 
 <h2>联系我们</h2>
 
-<p>如果您对于 CoroC 有什么建议，可以之间在 bitbucket 上给我发 pull request，当然也可以发邮件到我的邮箱 <a href="&#109;&#x61;&#105;&#108;&#x74;&#111;&#x3a;&#x61;&#109;&#97;&#108;&#99;&#97;&#111;&#x77;&#101;&#105;&#x40;&#103;&#109;&#97;&#x69;&#108;&#46;&#x63;&#x6f;&#109;&#x2e;">&#x61;&#109;&#x61;&#108;&#x63;&#x61;&#111;&#x77;&#x65;&#105;&#64;&#x67;&#109;&#97;&#x69;&#108;&#x2e;&#x63;&#111;&#x6d;&#46;</a></p>
+<p>如果您对于 CoroC 有什么建议，可以之间在 bitbucket 上给我发 pull request，当然也可以发邮件到我的邮箱 <a href="&#109;&#x61;&#x69;&#108;&#x74;&#x6f;&#x3a;&#97;&#109;&#97;&#108;&#x63;&#97;&#111;&#119;&#x65;&#105;&#x40;&#x67;&#109;&#97;&#105;&#108;&#46;&#99;&#111;&#x6d;&#46;">&#97;&#109;&#x61;&#x6c;&#x63;&#97;&#x6f;&#119;&#x65;&#x69;&#64;&#103;&#x6d;&#97;&#x69;&#x6c;&#46;&#x63;&#x6f;&#109;&#46;</a></p>
 ]]></content>
   </entry>
   
   <entry>
     <title type="html"><![CDATA[构建C协程之ucontext篇（上）]]></title>
-    <link href="http://amalcao.github.io/blog/2014/07/10/cxie-cheng-zhi-ucontextpian-shang/"/>
+    <link href="http://blog.amalcao.me/blog/2014/07/10/cxie-cheng-zhi-ucontextpian-shang/"/>
     <updated>2014-07-10T16:57:50+08:00</updated>
-    <id>http://amalcao.github.io/blog/2014/07/10/cxie-cheng-zhi-ucontextpian-shang</id>
+    <id>http://blog.amalcao.me/blog/2014/07/10/cxie-cheng-zhi-ucontextpian-shang</id>
     <content type="html"><![CDATA[<h1>原理简介</h1>
 
 <p>所谓 “ucontext” 机制是 GNU C 库提供的一组用于创建、保存、切换用户态执行“上下文”（context）的API，可以看作是 “setjmp/long_jmp” 的“升级版”，主要包括以下四个函数：</p>
@@ -144,9 +144,9 @@ libgo的调度器部分基本用C开发并由GCC编译，“goroutine”（Go语
   
   <entry>
     <title type="html"><![CDATA[构建C协程之setjmp/long_jmp篇]]></title>
-    <link href="http://amalcao.github.io/blog/2014/07/10/cxie-cheng-zhi-setjmp-slash-long-jmp/"/>
+    <link href="http://blog.amalcao.me/blog/2014/07/10/cxie-cheng-zhi-setjmp-slash-long-jmp/"/>
     <updated>2014-07-10T16:15:20+08:00</updated>
-    <id>http://amalcao.github.io/blog/2014/07/10/cxie-cheng-zhi-setjmp-slash-long-jmp</id>
+    <id>http://blog.amalcao.me/blog/2014/07/10/cxie-cheng-zhi-setjmp-slash-long-jmp</id>
     <content type="html"><![CDATA[<h1>原理简介</h1>
 
 <p>在标准C中的头文件<code>&lt;setjmp.h&gt;</code>中定义了一组函数 setjmp / long_jmp 用来实现“非本地跳转”的功能，利用 setjmp 可以保存当前执行线索状态，稍后通过 long_jmp 函数可以实现状态的恢复，并且可以跨多层函数调用栈进行跳转。具体接口定义如下：</p>
@@ -441,7 +441,7 @@ libgo的调度器部分基本用C开发并由GCC编译，“goroutine”（Go语
 </ul>
 
 
-<p><img class="center" src="http://amalcao.github.io/images/2014/sjlj01.jpeg"></p>
+<p><img class="center" src="http://blog.amalcao.me/images/2014/sjlj01.jpeg"></p>
 
 <h2>小结</h2>
 
@@ -503,7 +503,7 @@ libgo的调度器部分基本用C开发并由GCC编译，“goroutine”（Go语
 </ul>
 
 
-<p><img class="center" src="http://amalcao.github.io/images/2014/stack-convention.png"></p>
+<p><img class="center" src="http://blog.amalcao.me/images/2014/stack-convention.png"></p>
 
 <p>了解了这些基本知识后，就可以分析 Cilkplus 的代码了，其中最关键的部分如下所示：</p>
 
@@ -656,7 +656,7 @@ libgo的调度器部分基本用C开发并由GCC编译，“goroutine”（Go语
 
 <p>我把上面这个流程花了一个草图，供大家参考：</p>
 
-<p><img class="center" src="http://amalcao.github.io/images/2014/cilkrts_cg.jpeg"></p>
+<p><img class="center" src="http://blog.amalcao.me/images/2014/cilkrts_cg.jpeg"></p>
 
 <h1>总结</h1>
 
@@ -672,9 +672,9 @@ libgo的调度器部分基本用C开发并由GCC编译，“goroutine”（Go语
   
   <entry>
     <title type="html"><![CDATA[构建C协程之概述]]></title>
-    <link href="http://amalcao.github.io/blog/2014/07/10/cyu-yan-xie-cheng-xi-tong-jie-shao-zhi-yi/"/>
+    <link href="http://blog.amalcao.me/blog/2014/07/10/cyu-yan-xie-cheng-xi-tong-jie-shao-zhi-yi/"/>
     <updated>2014-07-10T15:23:40+08:00</updated>
-    <id>http://amalcao.github.io/blog/2014/07/10/cyu-yan-xie-cheng-xi-tong-jie-shao-zhi-yi</id>
+    <id>http://blog.amalcao.me/blog/2014/07/10/cyu-yan-xie-cheng-xi-tong-jie-shao-zhi-yi</id>
     <content type="html"><![CDATA[<blockquote><p> <em>从本篇开始，打算开启一个系列，专门介绍C语言环境下各种协程系统的实现机制，算是对前阶段工作的一个系统总结吧！
 目前的计划是根据实现机制的不同，分成两到三篇来介绍，具体的案例主要以 Go 和 Cilkplus 这两门语言的运行时环境为主，同时结合其他一些个人觉得比较有新意的小型开源系统。
 另外，最近陆陆续续分析了很多开源并发系统的代码，希望也能抽时间好好总结一下。</em></p></blockquote>
@@ -722,9 +722,9 @@ libgo的调度器部分基本用C开发并由GCC编译，“goroutine”（Go语
   
   <entry>
     <title type="html"><![CDATA[Go 语言对OS系统调用的处理]]></title>
-    <link href="http://amalcao.github.io/blog/2014/05/22/go-yu-yan-dui-osxi-tong-diao-yong-de-chu-li/"/>
+    <link href="http://blog.amalcao.me/blog/2014/05/22/go-yu-yan-dui-osxi-tong-diao-yong-de-chu-li/"/>
     <updated>2014-05-22T12:01:32+08:00</updated>
-    <id>http://amalcao.github.io/blog/2014/05/22/go-yu-yan-dui-osxi-tong-diao-yong-de-chu-li</id>
+    <id>http://blog.amalcao.me/blog/2014/05/22/go-yu-yan-dui-osxi-tong-diao-yong-de-chu-li</id>
     <content type="html"><![CDATA[<blockquote><p><em>上回讲Goroutine状态变换的时候，遗留了一部分关于Syscall处理的内容，这次打算把Go语言对Syscall的处理机制系统的总结一下，放在今天这篇文章中。</em></p></blockquote>
 
 <h2>Go 语言库对Syscall的封装</h2>
@@ -1005,9 +1005,9 @@ libgo的调度器部分基本用C开发并由GCC编译，“goroutine”（Go语
   
   <entry>
     <title type="html"><![CDATA[关于Go语言调度器实现细节的补充分析]]></title>
-    <link href="http://amalcao.github.io/blog/2014/05/16/guan-yu-goyu-yan-diao-du-qi-shi-xian-xi-jie-de-bu-chong-fen-xi/"/>
+    <link href="http://blog.amalcao.me/blog/2014/05/16/guan-yu-goyu-yan-diao-du-qi-shi-xian-xi-jie-de-bu-chong-fen-xi/"/>
     <updated>2014-05-16T09:23:44+08:00</updated>
-    <id>http://amalcao.github.io/blog/2014/05/16/guan-yu-goyu-yan-diao-du-qi-shi-xian-xi-jie-de-bu-chong-fen-xi</id>
+    <id>http://blog.amalcao.me/blog/2014/05/16/guan-yu-goyu-yan-diao-du-qi-shi-xian-xi-jie-de-bu-chong-fen-xi</id>
     <content type="html"><![CDATA[<blockquote><p><em>在之前的<a href="http://blog.amalcao.me/blog/2014/05/09/erlang-and-go-de-bing-fa-diao-du-qian-xi/">一篇博文</a>中，简单的介绍了一下Go调度器的原理。而进行了一番深入分析后，发现Go的调度器代码中存在许多值得玩味的细节，不仔细体会可能很难发觉作者的匠心。原本打算再写一篇文章系统的分析一下这些细节，但无意中发现了另一位爱好Go的朋友已经做类似的工作，并且结构非常清晰，内容也较准确（链接在<a href="https://github.com/tiancaiamao/go-internals">这里</a>），为了避免造成雷同就放弃了之前的计划，转而罗列一些个人认为的Go语言中比较有意思的点，分别展开介绍一下。文章结构随性，如果感觉缺少联系，请参考其他资料。</em></p></blockquote>
 
 <h2>Goroutine 状态的演变</h2>
@@ -1018,7 +1018,7 @@ libgo的调度器部分基本用C开发并由GCC编译，“goroutine”（Go语
 
 <p>好了，以下是我总结的一张goroutine的状态迁移图，圆形框表示状态，箭头及文字信息表示切换的方向和条件：</p>
 
-<p><img class="center" src="http://amalcao.github.io/images/2014/goroutine_states.jpeg"></p>
+<p><img class="center" src="http://blog.amalcao.me/images/2014/goroutine_states.jpeg"></p>
 
 <p>下面来简单分析一下， 其中状态 <code>Gidle</code> 在Go调度器代码中并没有被真正被使用到，所以直接忽略。事实上，一旦runtime新建了一个goroutine结构，就会将其状态置为<code>Grunnable</code>并加入到任务队列中，因此我们以该状态作为起点进行介绍：</p>
 
@@ -1162,9 +1162,9 @@ libgo的调度器部分基本用C开发并由GCC编译，“goroutine”（Go语
   
   <entry>
     <title type="html"><![CDATA[Erlang &amp; Go 的IO优化策略简介]]></title>
-    <link href="http://amalcao.github.io/blog/2014/05/09/erlang-and-go-de-ioyou-hua-ce-lue-jian-jie/"/>
+    <link href="http://blog.amalcao.me/blog/2014/05/09/erlang-and-go-de-ioyou-hua-ce-lue-jian-jie/"/>
     <updated>2014-05-09T14:06:12+08:00</updated>
-    <id>http://amalcao.github.io/blog/2014/05/09/erlang-and-go-de-ioyou-hua-ce-lue-jian-jie</id>
+    <id>http://blog.amalcao.me/blog/2014/05/09/erlang-and-go-de-ioyou-hua-ce-lue-jian-jie</id>
     <content type="html"><![CDATA[<blockquote><p><em>之前关于调度器的对比分析的文章，在结束时遗留了一些问题：当系统出现高并发的IO访问时，如一个网络服务器通常要并发处理成百上千的链接，每个链接可能都是由一个用户任务执行的，那么将会出现大量阻塞的IO操作，如果为每个阻塞操作都单独分配一个OS线程，那么系统很容易就会退化成多OS线程的系统，轻量任务的优势将无从谈起。本文试图回答这个问题，通过分析Go和Erlang对于IO、特别是网络IO的优化机制，了解其对调度器乃至整个系统性能的影响。</em></p></blockquote>
 
 <h2>Go的IO优化机制 —— netpoller</h2>
@@ -1245,9 +1245,9 @@ libgo的调度器部分基本用C开发并由GCC编译，“goroutine”（Go语
   
   <entry>
     <title type="html"><![CDATA[Erlang &amp; Go 消息传递机制初探]]></title>
-    <link href="http://amalcao.github.io/blog/2014/05/09/erlang-and-go-xiao-xi-chuan-di-ji-zhi-chu-tan/"/>
+    <link href="http://blog.amalcao.me/blog/2014/05/09/erlang-and-go-xiao-xi-chuan-di-ji-zhi-chu-tan/"/>
     <updated>2014-05-09T13:22:22+08:00</updated>
-    <id>http://amalcao.github.io/blog/2014/05/09/erlang-and-go-xiao-xi-chuan-di-ji-zhi-chu-tan</id>
+    <id>http://blog.amalcao.me/blog/2014/05/09/erlang-and-go-xiao-xi-chuan-di-ji-zhi-chu-tan</id>
     <content type="html"><![CDATA[<blockquote><p><em>上一篇文章介绍了 Go 和 Erlang 在调度器的实现，本文将简要介绍这两种并发语言的消息传递机制</em></p></blockquote>
 
 <h2>简要对比</h2>
@@ -1937,9 +1937,9 @@ Unix的select通过逐一测试文件描述符集合判断是当前操作，而G
   
   <entry>
     <title type="html"><![CDATA[Erlang &amp; Go 的并发调度浅析]]></title>
-    <link href="http://amalcao.github.io/blog/2014/05/09/erlang-and-go-de-bing-fa-diao-du-qian-xi/"/>
+    <link href="http://blog.amalcao.me/blog/2014/05/09/erlang-and-go-de-bing-fa-diao-du-qian-xi/"/>
     <updated>2014-05-09T12:05:36+08:00</updated>
-    <id>http://amalcao.github.io/blog/2014/05/09/erlang-and-go-de-bing-fa-diao-du-qian-xi</id>
+    <id>http://blog.amalcao.me/blog/2014/05/09/erlang-and-go-de-bing-fa-diao-du-qian-xi</id>
     <content type="html"><![CDATA[<blockquote><p> <em>作为当前业界比较关注的两种面向并发领域的编程语言，Erlang和Go的调度是如何实现的？</em></p></blockquote>
 
 <p>Go 语言和 Erlang 都是面向并发应用的语言，都采用轻量级线程和消息传递模型。尽管Go在语法上也支持共享，但必须以通信的方式同步方能保证其正确性。Erlang则是完全不支持进程间的共享，状态信息完全需要依靠消息彼此传递。</p>
