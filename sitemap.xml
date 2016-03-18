@@ -4,68 +4,76 @@
         <loc>
             http://blog.amalcao.me/blog/2014/05/09/erlang-and-go-de-bing-fa-diao-du-qian-xi/
         </loc>
-        <lastmod>2016-03-11T17:31:59+08:00</lastmod>
+        <lastmod>2016-03-18T12:02:51+08:00</lastmod>
     </url>
     <url>
         <loc>
             http://blog.amalcao.me/blog/2014/05/09/erlang-and-go-xiao-xi-chuan-di-ji-zhi-chu-tan/
         </loc>
-        <lastmod>2016-03-11T17:31:59+08:00</lastmod>
+        <lastmod>2016-03-18T12:02:51+08:00</lastmod>
     </url>
     <url>
         <loc>
             http://blog.amalcao.me/blog/2014/05/09/erlang-and-go-de-ioyou-hua-ce-lue-jian-jie/
         </loc>
-        <lastmod>2016-03-11T17:31:59+08:00</lastmod>
+        <lastmod>2016-03-18T12:02:51+08:00</lastmod>
     </url>
     <url>
         <loc>
             http://blog.amalcao.me/blog/2014/05/16/guan-yu-goyu-yan-diao-du-qi-shi-xian-xi-jie-de-bu-chong-fen-xi/
         </loc>
-        <lastmod>2016-03-11T17:31:59+08:00</lastmod>
+        <lastmod>2016-03-18T12:02:51+08:00</lastmod>
     </url>
     <url>
         <loc>
             http://blog.amalcao.me/blog/2014/05/22/go-yu-yan-dui-osxi-tong-diao-yong-de-chu-li/
         </loc>
-        <lastmod>2016-03-11T17:31:59+08:00</lastmod>
+        <lastmod>2016-03-18T12:02:51+08:00</lastmod>
     </url>
     <url>
         <loc>
             http://blog.amalcao.me/blog/2014/07/10/cyu-yan-xie-cheng-xi-tong-jie-shao-zhi-yi/
         </loc>
-        <lastmod>2016-03-11T17:31:59+08:00</lastmod>
+        <lastmod>2016-03-18T12:02:51+08:00</lastmod>
     </url>
     <url>
         <loc>http://blog.amalcao.me/blog/2014/07/10/cxie-cheng-zhi-setjmp-slash-long-jmp/</loc>
-        <lastmod>2016-03-11T17:31:59+08:00</lastmod>
+        <lastmod>2016-03-18T12:02:51+08:00</lastmod>
     </url>
     <url>
         <loc>http://blog.amalcao.me/blog/2014/07/10/cxie-cheng-zhi-ucontextpian-shang/</loc>
-        <lastmod>2016-03-11T18:29:13+08:00</lastmod>
+        <lastmod>2016-03-18T12:02:51+08:00</lastmod>
     </url>
     <url>
         <loc>http://blog.amalcao.me/blog/2016/03/11/coroc-yu-yan-kai-yuan/</loc>
-        <lastmod>2016-03-15T22:08:39+08:00</lastmod>
+        <lastmod>2016-03-18T12:02:51+08:00</lastmod>
     </url>
     <url>
         <loc>http://blog.amalcao.me/blog/archives/</loc>
-        <lastmod>2016-03-15T22:08:39+08:00</lastmod>
+        <lastmod>2016-03-18T12:02:51+08:00</lastmod>
     </url>
     <url>
-        <loc>http://blog.amalcao.me/feed/index.xml</loc>
-        <lastmod>2014-08-15T14:36:39+08:00</lastmod>
+        <loc>http://blog.amalcao.me/404.html</loc>
+        <lastmod>2016-03-18T12:02:51+08:00</lastmod>
     </url>
     <url>
         <loc>http://blog.amalcao.me/</loc>
-        <lastmod>2016-03-15T22:08:39+08:00</lastmod>
+        <lastmod>2016-03-18T12:02:51+08:00</lastmod>
     </url>
     <url>
-        <loc>http://blog.amalcao.me/robots.txt</loc>
-        <lastmod>2014-08-15T14:36:39+08:00</lastmod>
+        <loc>http://blog.amalcao.me/arquivos/</loc>
+        <lastmod>2016-03-18T12:02:51+08:00</lastmod>
     </url>
     <url>
         <loc>http://blog.amalcao.me/search.html</loc>
-        <lastmod>2016-03-11T17:31:59+08:00</lastmod>
+        <lastmod>2016-03-18T12:02:51+08:00</lastmod>
+    </url>
+    <url>
+        <loc>http://blog.amalcao.me/feed/index.xml</loc>
+        <lastmod>2016-03-18T10:57:29+08:00</lastmod>
+    </url>
+    <url>
+        <loc>http://blog.amalcao.me/robots.txt</loc>
+        <lastmod>2016-03-18T11:36:24+08:00</lastmod>
     </url>
 </urlset>
